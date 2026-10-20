@@ -1,0 +1,13 @@
+[package]
+name = "opentop-widgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "opentop widget library: ratatui widgets rendering snapshots with a theme"
+repository.workspace = true
+
+[dependencies]
+opentop-core = { path = "../opentop-core", version = "0.1.0" }
+opentop-theme = { path = "../opentop-theme", version = "0.1.0" }
+ratatui.workspace = true

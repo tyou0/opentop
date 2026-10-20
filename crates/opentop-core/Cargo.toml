@@ -1,0 +1,25 @@
+[package]
+name = "opentop-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "opentop backend: snapshot model, collectors and sampling engine"
+repository.workspace = true
+
+[features]
+default = ["connections", "gpu-nvidia", "sensors-lm-sensors"]
+connections = ["dep:netstat2"]
+gpu-nvidia = []
+sensors-lm-sensors = []
+
+[dependencies]
+sysinfo.workspace = true
+starship-battery.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+netstat2 = { workspace = true, optional = true }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+macmon = "0.10"

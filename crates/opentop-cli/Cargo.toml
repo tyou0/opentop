@@ -1,0 +1,17 @@
+[package]
+name = "opentop-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "opentop command line harness: dump snapshots as JSON or text"
+repository.workspace = true
+
+[[bin]]
+name = "opentop-cli"
+path = "src/main.rs"
+
+[dependencies]
+opentop-core = { path = "../opentop-core", version = "0.1.0" }
+clap.workspace = true
+serde_json.workspace = true

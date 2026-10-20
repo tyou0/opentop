@@ -1,0 +1,21 @@
+[package]
+name = "opentop-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "opentop interactive TUI: ratatui frontend with keyboard + mouse support"
+repository.workspace = true
+
+[[bin]]
+name = "opentop"
+path = "src/main.rs"
+
+[dependencies]
+opentop-core = { path = "../opentop-core", version = "0.1.0" }
+opentop-theme = { path = "../opentop-theme", version = "0.1.0" }
+opentop-widgets = { path = "../opentop-widgets", version = "0.1.0" }
+ratatui.workspace = true
+crossterm = { version = "0.27", features = ["event-stream"] }
+futures = "0.3"
+thiserror.workspace = true
