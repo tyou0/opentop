@@ -92,6 +92,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         process_sort,
         process_state,
         process_page_size,
+        process_order_held,
         catalog,
         config_error,
         plugin_error,
@@ -118,6 +119,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
             *process_sort,
             process_state,
             process_page_size,
+            *process_order_held,
             catalog,
             plugin_results,
             &panel_theme,
@@ -134,6 +136,9 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         .is_some_and(|id| id.as_str() == "builtin:processes")
     {
         binds.push(Keybind::new("x", "terminate"));
+        if *process_order_held {
+            binds.push(Keybind::new("r", "live sort"));
+        }
     }
     binds.extend([
         Keybind::new("w", "widgets"),
@@ -184,6 +189,7 @@ fn render_panel(
     process_sort: ProcessSort,
     process_state: &mut ProcessTableState,
     process_page_size: &mut usize,
+    process_order_held: bool,
     catalog: &WidgetCatalog,
     plugin_results: &std::collections::HashMap<String, PluginResult>,
     theme: &Theme,
@@ -262,6 +268,7 @@ fn render_panel(
                     config: ProcessTableConfig {
                         sort: process_sort,
                         show_command: area.width >= 80,
+                        preserve_order: process_order_held,
                         ..Default::default()
                     },
                 },
@@ -376,6 +383,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("↑↓ / j k     Select process"),
         Line::from("PgUp / PgDn  Move one page"),
         Line::from("s            Cycle process sort"),
+        Line::from("r            Resume live process sorting"),
         Line::from("x            Terminate selected process (confirm first)"),
         Line::from("Tab          Focus next widget"),
         Line::from("[ / ]        Fewer / more columns"),

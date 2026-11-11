@@ -99,6 +99,9 @@ impl App {
                 self.request_termination()
             }
             KeyCode::Char('s') if self.is_focused("builtin:processes") => self.cycle_sort(),
+            KeyCode::Char('r') if self.is_focused("builtin:processes") => {
+                self.resume_process_sorting()
+            }
             KeyCode::Left => self.focus_prev(),
             KeyCode::Right => self.focus_next(),
             KeyCode::Up | KeyCode::Char('k') if self.is_focused("builtin:processes") => {
@@ -274,6 +277,12 @@ mod tests {
         };
         app.handle_mouse(click);
         assert_eq!(app.process_state.selected, 2);
+
+        assert!(app.process_order_held);
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert!(!app.process_order_held);
+        assert_eq!(app.process_state.selected, 0);
+        assert_eq!(app.process_state.offset, 0);
     }
 
     #[test]

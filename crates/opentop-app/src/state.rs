@@ -10,7 +10,7 @@ use opentop_core::plugins::{
 use opentop_core::snapshot::ProcessInfo;
 use opentop_theme::Theme;
 use opentop_widgets::processes::{ProcessSort, ProcessTableState};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -36,6 +36,7 @@ pub struct App {
     pub process_state: ProcessTableState,
     pub process_page_size: usize,
     pub process_selected_pid: Option<u32>,
+    pub process_order_held: bool,
     pub pending_process: Option<ProcessInfo>,
     pub process_action_status: Option<String>,
     process_action_rx: Option<Receiver<Result<u32, String>>>,
@@ -98,6 +99,7 @@ impl App {
             process_state: ProcessTableState::default(),
             process_page_size: 10,
             process_selected_pid: None,
+            process_order_held: false,
             pending_process: None,
             process_action_status: None,
             process_action_rx: None,
@@ -241,7 +243,17 @@ impl App {
         let pid = self.selected_process_pid();
         self.process_sort = self.process_sort.cycle();
         self.process_selected_pid = pid;
+        if self.process_order_held {
+            self.sort_processes_in_place();
+        }
         self.sync_process_selection();
+        self.dirty = true;
+    }
+
+    pub fn resume_process_sorting(&mut self) {
+        self.process_order_held = false;
+        self.process_selected_pid = None;
+        self.process_state.reset();
         self.dirty = true;
     }
 
@@ -250,19 +262,20 @@ impl App {
     }
 
     pub fn selected_process_pid(&self) -> Option<u32> {
-        self.process_sort
-            .sorted(&self.frame.snapshot.processes)
+        self.ordered_processes()
             .get(self.process_state.selected)
             .map(|p| p.pid)
     }
 
     pub fn move_process_selection(&mut self, delta: isize) {
+        self.hold_process_order();
         self.process_state.move_by(delta, self.process_len());
         self.process_selected_pid = self.selected_process_pid();
         self.dirty = true;
     }
 
     pub fn select_process_index(&mut self, index: usize) {
+        self.hold_process_order();
         self.process_state.select_clamped(index, self.process_len());
         self.process_selected_pid = self.selected_process_pid();
         self.dirty = true;
@@ -281,8 +294,7 @@ impl App {
             return;
         }
         self.pending_process = self
-            .process_sort
-            .sorted(&self.frame.snapshot.processes)
+            .ordered_processes()
             .get(self.process_state.selected)
             .map(|process| (*process).clone());
         if self.pending_process.is_some() {
@@ -328,29 +340,104 @@ impl App {
         let Some(frame) = monitor.try_frame_since(self.frame.revision) else {
             return false;
         };
-        self.frame = frame;
-        self.sync_process_selection();
-        self.dirty = true;
+        self.apply_frame(frame);
         true
     }
 
+    fn apply_frame(&mut self, mut frame: MonitorFrame) {
+        if self.process_order_held {
+            let positions: HashMap<_, _> = self
+                .frame
+                .snapshot
+                .processes
+                .iter()
+                .enumerate()
+                .map(|(index, process)| ((process.pid, process.start_time_secs), index))
+                .collect();
+            let mut existing: Vec<Option<ProcessInfo>> = (0..self.frame.snapshot.processes.len())
+                .map(|_| None)
+                .collect();
+            let mut new = Vec::new();
+            for process in frame.snapshot.processes.drain(..) {
+                if let Some(&index) = positions.get(&(process.pid, process.start_time_secs)) {
+                    existing[index] = Some(process);
+                } else {
+                    new.push(process);
+                }
+            }
+            frame
+                .snapshot
+                .processes
+                .extend(existing.into_iter().flatten());
+            frame.snapshot.processes.extend(new);
+        }
+        self.frame = frame;
+        self.sync_process_selection();
+        self.dirty = true;
+    }
+
+    fn ordered_processes(&self) -> Vec<&ProcessInfo> {
+        if self.process_order_held {
+            self.frame.snapshot.processes.iter().collect()
+        } else {
+            self.process_sort.sorted(&self.frame.snapshot.processes)
+        }
+    }
+
+    fn sort_processes_in_place(&mut self) {
+        let positions: HashMap<_, _> = self
+            .process_sort
+            .sorted(&self.frame.snapshot.processes)
+            .into_iter()
+            .enumerate()
+            .map(|(index, process)| ((process.pid, process.start_time_secs), index))
+            .collect();
+        self.frame.snapshot.processes.sort_by_key(|process| {
+            positions
+                .get(&(process.pid, process.start_time_secs))
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    fn hold_process_order(&mut self) {
+        if !self.process_order_held && !self.frame.snapshot.processes.is_empty() {
+            self.sort_processes_in_place();
+            self.process_order_held = true;
+        }
+    }
+
     fn sync_process_selection(&mut self) {
-        let sorted = self.process_sort.sorted(&self.frame.snapshot.processes);
-        if sorted.is_empty() {
+        let processes = &self.frame.snapshot.processes;
+        if processes.is_empty() {
             self.process_state.reset();
+            self.process_selected_pid = None;
+            self.process_order_held = false;
+            return;
+        }
+        if !self.process_order_held {
+            self.process_state
+                .select_clamped(self.process_state.selected, processes.len());
             self.process_selected_pid = None;
             return;
         }
+        let old_row = self
+            .process_state
+            .selected
+            .saturating_sub(self.process_state.offset);
         let index = self
             .process_selected_pid
-            .and_then(|pid| sorted.iter().position(|p| p.pid == pid))
+            .and_then(|pid| processes.iter().position(|p| p.pid == pid))
             .unwrap_or_else(|| {
                 self.process_state
                     .selected
-                    .min(sorted.len().saturating_sub(1))
+                    .min(processes.len().saturating_sub(1))
             });
+        if index != self.process_state.selected {
+            self.process_state.offset = index.saturating_sub(old_row);
+        }
         self.process_state.select(index);
-        self.process_selected_pid = Some(sorted[index].pid);
+        self.process_selected_pid = Some(processes[index].pid);
     }
 
     pub(crate) fn set_exit(&mut self) {
@@ -777,8 +864,7 @@ mod tests {
         app.select_process_index(1);
         assert_eq!(app.selected_process_pid(), Some(20));
 
-        app.process_sort = ProcessSort::Memory;
-        app.sync_process_selection();
+        app.cycle_sort();
         assert_eq!(app.selected_process_pid(), Some(20));
 
         app.frame
@@ -794,6 +880,70 @@ mod tests {
         app.frame.snapshot.processes.clear();
         app.sync_process_selection();
         assert_eq!(app.selected_process_pid(), None);
+        assert_eq!(app.process_state.selected, 0);
+        assert_eq!(app.process_state.offset, 0);
+    }
+
+    #[test]
+    fn browsing_holds_order_and_selection_while_values_change() {
+        for sort in [ProcessSort::Cpu, ProcessSort::Memory] {
+            let mut app = App::new();
+            app.process_sort = sort;
+            app.frame.snapshot.processes = (1..=6)
+                .map(|pid| process(pid, (70 - pid * 10) as f32, (70 - pid * 10) as u64))
+                .collect();
+            app.sync_process_selection();
+            app.select_process_index(3);
+            app.process_state.offset = 2;
+            assert_eq!(app.selected_process_pid(), Some(4));
+
+            let mut frame = app.frame.clone();
+            frame.snapshot.processes.retain(|process| process.pid > 2);
+            frame.snapshot.processes.reverse();
+            let selected = frame
+                .snapshot
+                .processes
+                .iter_mut()
+                .find(|p| p.pid == 4)
+                .unwrap();
+            selected.cpu_percent = 99.0;
+            selected.memory_bytes = 99;
+            frame.snapshot.processes.push(process(7, 100.0, 100));
+            app.apply_frame(frame);
+
+            assert_eq!(
+                app.frame
+                    .snapshot
+                    .processes
+                    .iter()
+                    .map(|p| p.pid)
+                    .collect::<Vec<_>>(),
+                [3, 4, 5, 6, 7]
+            );
+            assert_eq!(app.selected_process_pid(), Some(4));
+            assert_eq!(app.process_state.selected - app.process_state.offset, 1);
+            let selected = &app.frame.snapshot.processes[app.process_state.selected];
+            assert_eq!(selected.cpu_percent, 99.0);
+            assert_eq!(selected.memory_bytes, 99);
+
+            app.resume_process_sorting();
+            assert!(!app.process_order_held);
+            assert_eq!(app.selected_process_pid(), Some(7));
+            assert_eq!(app.process_state.offset, 0);
+        }
+    }
+
+    #[test]
+    fn live_sort_does_not_follow_the_initial_top_process() {
+        let mut app = App::new();
+        app.frame.snapshot.processes = vec![process(1, 90.0, 10), process(2, 10.0, 20)];
+        app.sync_process_selection();
+        assert_eq!(app.selected_process_pid(), Some(1));
+
+        let mut frame = app.frame.clone();
+        frame.snapshot.processes[1].cpu_percent = 100.0;
+        app.apply_frame(frame);
+        assert_eq!(app.selected_process_pid(), Some(2));
         assert_eq!(app.process_state.selected, 0);
         assert_eq!(app.process_state.offset, 0);
     }

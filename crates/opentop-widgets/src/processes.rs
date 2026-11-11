@@ -62,6 +62,8 @@ pub struct ProcessTableConfig {
     pub show_user: bool,
     pub show_command: bool,
     pub sort: ProcessSort,
+    /// Render processes in their supplied order while the user browses.
+    pub preserve_order: bool,
 }
 
 impl Default for ProcessTableConfig {
@@ -71,6 +73,7 @@ impl Default for ProcessTableConfig {
             show_user: true,
             show_command: false,
             sort: ProcessSort::Cpu,
+            preserve_order: false,
         }
     }
 }
@@ -129,7 +132,16 @@ impl StatefulWidget for ProcessTable<'_> {
         let theme = self.theme;
         let block = panel(
             theme,
-            format!("{} · {}", self.config.title, self.config.sort.label()),
+            format!(
+                "{} · {}{}",
+                self.config.title,
+                self.config.sort.label(),
+                if self.config.preserve_order {
+                    " · held"
+                } else {
+                    ""
+                }
+            ),
         );
         let inner = block.inner(area);
         block.render(area, buf);
@@ -137,7 +149,11 @@ impl StatefulWidget for ProcessTable<'_> {
             return;
         }
 
-        let list = self.config.sort.sorted(&self.snapshot.processes);
+        let list: Vec<_> = if self.config.preserve_order {
+            self.snapshot.processes.iter().collect()
+        } else {
+            self.config.sort.sorted(&self.snapshot.processes)
+        };
         let total = list.len();
         if total == 0 {
             unavailable(theme, "no processes").render(inner, buf);

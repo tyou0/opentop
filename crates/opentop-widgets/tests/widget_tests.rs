@@ -46,6 +46,51 @@ fn process_name_sort_is_case_insensitive_and_breaks_ties_by_pid() {
 }
 
 #[test]
+fn process_table_can_hold_order_while_values_change() {
+    let snapshot = Snapshot {
+        processes: vec![
+            ProcessInfo {
+                pid: 1,
+                name: "first".into(),
+                cpu_percent: 1.0,
+                ..Default::default()
+            },
+            ProcessInfo {
+                pid: 2,
+                name: "busiest".into(),
+                cpu_percent: 99.0,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let theme = Theme::dark();
+    for (preserve_order, first_name) in [(true, "first"), (false, "busiest")] {
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        let mut state = ProcessTableState::default();
+        terminal
+            .draw(|frame| {
+                frame.render_stateful_widget(
+                    ProcessTable {
+                        snapshot: &snapshot,
+                        theme: &theme,
+                        config: ProcessTableConfig {
+                            preserve_order,
+                            ..Default::default()
+                        },
+                    },
+                    Rect::new(0, 0, 60, 8),
+                    &mut state,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let first_row: String = (0..60).map(|x| buffer[(x, 2)].symbol()).collect();
+        assert!(first_row.contains(first_name), "{first_row}");
+    }
+}
+
+#[test]
 fn process_sort_uses_pid_ties_and_selection_highlights_the_rendered_row() {
     let processes = vec![
         ProcessInfo {
