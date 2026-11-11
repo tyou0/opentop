@@ -2,12 +2,11 @@
 //! [`Snapshot`] and [`History`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{
-    Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
-};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::collectors::Collector;
 use crate::collectors::battery::BatteryCollector;
 use crate::collectors::cpu_memory::CpuMemoryCollector;
 use crate::collectors::disks::DiskCollector;
@@ -15,7 +14,6 @@ use crate::collectors::network::NetworkCollector;
 use crate::collectors::processes::ProcessesCollector;
 use crate::collectors::sensors::SensorsCollector;
 use crate::collectors::system_info::SystemInfoCollector;
-use crate::collectors::Collector;
 use crate::history::History;
 use crate::now_ms;
 use crate::smart::SmartCollector;
@@ -400,5 +398,34 @@ fn sleep_until(deadline: Instant, stop: &AtomicBool) {
             return;
         }
         thread::sleep((deadline - now).min(GRANULARITY));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_frame_since_never_waits_for_a_busy_writer() {
+        let config = MonitorConfig::default();
+        let (shared, stop) = new_shared(&config);
+        shared.write().unwrap().revision = 1;
+        let monitor = MonitorHandle {
+            shared: shared.clone(),
+            stop,
+            threads: Mutex::new(Vec::new()),
+            config,
+        };
+
+        assert_eq!(
+            monitor.try_frame_since(0).map(|frame| frame.revision),
+            Some(1)
+        );
+        assert!(monitor.try_frame_since(1).is_none());
+
+        let _guard = shared.write().unwrap();
+        let started = Instant::now();
+        assert!(monitor.try_frame_since(0).is_none());
+        assert!(started.elapsed() < Duration::from_millis(50));
     }
 }

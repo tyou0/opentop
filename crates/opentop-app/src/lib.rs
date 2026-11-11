@@ -1,5 +1,9 @@
+pub mod config;
 pub mod dashboard;
 pub mod input;
+pub mod layout;
 pub mod runtime;
 pub mod state;
 pub mod terminal;
+pub mod widget_picker;
+pub mod widgets;

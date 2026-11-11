@@ -21,22 +21,83 @@ A modern, cross-platform terminal system monitor built in Rust. opentop provides
 
 ## Installation
 
-### From source
+Install from a source checkout with a stable Rust toolchain and a C compiler/linker.
+On Windows, the Rust MSVC toolchain also requires the Visual Studio C++ build
+tools. See [rustup](https://rustup.rs/) for platform-specific setup.
+
+First, obtain a checkout of this repository. Replace `REPOSITORY_URL` with an
+accessible Git URL:
 
 ```bash
-git clone https://github.com/tyou/opentop.git
+git clone REPOSITORY_URL opentop
 cd opentop
-cargo build --release
 ```
 
-Binaries will be available at:
-- `target/release/opentop` - Interactive TUI
-- `target/release/opentop-cli` - CLI tool
+Run the following commands from the checkout root.
 
-### Using cargo install
+### Cargo
+
+With Rust installed through rustup or another provider, install both binaries:
 
 ```bash
-cargo install --path .
+cargo install --locked --path crates/opentop-app
+cargo install --locked --path crates/opentop-cli
+```
+
+Cargo installs `opentop` and `opentop-cli` into `~/.cargo/bin` by default
+(`%USERPROFILE%\.cargo\bin` on Windows). Add that directory to your `PATH` if
+your shell cannot find the commands. A custom Cargo installation root or
+`CARGO_HOME` may use a different `bin` directory.
+
+### Homebrew
+
+Homebrew can provide the Rust toolchain on macOS or Linux:
+
+```bash
+brew install rust
+```
+
+Then run the two [Cargo commands](#cargo) above. This repository does not
+provide a Homebrew formula for opentop itself.
+
+### mise
+
+Use mise to install Rust and run Cargo without changing your shell's active
+toolchain:
+
+```bash
+mise install rust@stable
+mise exec rust@stable -- cargo install --locked --path crates/opentop-app
+mise exec rust@stable -- cargo install --locked --path crates/opentop-cli
+```
+
+The binaries go into Cargo's installation directory as described above.
+
+### npm, pnpm, and Bun
+
+This repository does not provide a package for npm, pnpm, or Bun. The npm
+package named `opentop` is a different project. Use one of the Rust-based
+installation methods above for this application.
+
+### Build without installing
+
+To build the binaries in the checkout instead:
+
+```bash
+cargo build --release --locked
+```
+
+By default, the binaries are `target/release/opentop` and
+`target/release/opentop-cli`. On Windows, the executable names end in `.exe`.
+
+### Update or uninstall
+
+After updating the checkout, rerun the Cargo or mise installation commands above
+with `--force` to replace the installed binaries. To remove a Cargo installation:
+
+```bash
+cargo uninstall opentop-app
+cargo uninstall opentop-cli
 ```
 
 ## Usage
@@ -49,17 +110,131 @@ Launch the interactive dashboard:
 opentop
 ```
 
-**Key bindings:**
-- `q` / `Esc` - Quit
-- `↑↓` / `j k` - Navigate processes
-- `s` - Cycle process sort (CPU/mem/PID/name)
-- `t` / `Tab` - Toggle dark/light theme
-- `PgUp/PgDn` - Scroll process list
-- `Home/End` - Jump to top/bottom
-- `?` - Show help
-- Mouse support for selecting rows and scrolling
+Use `--config <path>` to override the config file. Repeated
+`--plugin-dir <path>` flags add plugin roots. See [docs/PLUGINS.md](docs/PLUGINS.md)
+for discovery, limits, and the opt-in example plugin.
 
-### CLI
+## Keyboard controls
+
+**Global controls (when not in a widget panel or overlay):**
+- `Tab` / `BackTab` - Focus the next/previous enabled widget
+- `↑↓` / `j k` - Navigate processes when the Processes widget is focused
+- `PgUp/PgDn`, `Home/End` - Page or jump through the process list
+- `s` - Cycle process sort when Processes is focused
+- `x` - Open process termination confirmation; `y` confirms, `n` / `Esc` cancels
+- `[` / `]` - Decrease/increase the number of widget columns
+- `Shift` + arrows - Move the focused widget; `Alt` + arrows resize it
+- `0` - Reset column count and pane sizes; `f` / `z` zooms the focused widget
+- `t` - Toggle dark/light theme
+- `w` - Open Widgets; Space toggles, `+`/`-` reorders, Enter applies, Esc cancels
+- `?` - Show help; Esc closes the top overlay
+- `q` / `Esc` - Quit when no overlay is open; Ctrl-C also quits
+- Mouse clicks focus panels and select visible process rows
+
+**Widgets overlay controls (when opened with `w`):**
+- `↑` / `↓` / `j` / `k` - Move selection
+- `Space` - Toggle the selected widget
+- `+` / `-` - Move enabled widget up/down in enabled order
+- `r` - Restore default built-in layout in draft
+- `Enter` - Apply draft, save configuration, close
+- `F5` - Rescan plugin manifests without executing them
+- `Esc` / `q` - Cancel draft and close
+
+**Plugin panels (when enabled and focused):**
+- Shows cached plugin output lines; no input handling needed
+- Status categories: waiting, ready, stale, missing, error categories
+
+**Help overlay (when opened with `?`):**
+- `Esc`, `q`, or `?` - Close help
+
+## Configuration file
+
+OpenTop uses a TOML configuration file located at:
+- `$XDG_CONFIG_HOME/opentop/config.toml` or `~/.config/opentop/config.toml` on Unix
+- `%APPDATA%/opentop/config.toml` on Windows
+
+Override with `--config <path>`:
+
+```bash
+opentop --config /path/to/my/config.toml
+```
+
+### Config format
+
+```toml
+schema_version = 1
+widgets = ["builtin:cpu_graph", "builtin:memory", "builtin:processes"]
+plugin_dirs = []
+```
+
+**`schema_version`**: Currently must be `1`. Unknown versions show readable errors and use defaults.
+
+**`widgets`**: Ordered list of enabled widgets. `[]` shows an empty dashboard with a prompt to press `w`. Widgets fill the available dashboard area; when there is not enough space for every row, focusing a widget scrolls it into view. Column count, pane sizes and widget order can be changed with the keyboard and are saved in the config file.
+
+Panels are arranged in rows. Horizontal resizing shares space with a neighboring panel; vertical resizing changes the height of the whole row.
+
+The process action sends SIGTERM on Unix and force-terminates on Windows. The app checks the selected process identity again before acting and reports permission or exit errors. On Linux, it requires kernel `pidfd` support and fails safely if that is unavailable. A successful signal does not guarantee that the process exits immediately.
+
+**`plugin_dirs`**: Additional directories to search for plugins alongside the standard search paths. Relative paths resolve against the config file's directory.
+
+### Configuration persistence
+
+Changes applied in the Widgets overlay are saved atomically using a temporary file sibling and rename. Failed saves keep the in-memory layout and show a readable error. Existing user files survive failed writes.
+
+Configuration supports:
+- Default values for missing fields
+- Duplicate widget IDs (first occurrence wins)
+- Unknown widget IDs (preserved as missing placeholders)
+- Plugin directory scanning limits and precedence rules
+
+## Plugin system
+
+OpenTop discovers executable plugins from one-level-deep folders containing `plugin.toml`.
+
+### Example plugin setup
+
+```bash
+# From the repository root:
+cargo run -p opentop-app -- --plugin-dir ./examples/plugins
+```
+
+Open Widgets with `w`, move to **Hello**, press Space, then Enter. The executable
+must have its executable bit set on Unix:
+
+```bash
+chmod +x examples/plugins/hello/hello.py
+```
+
+### Plugin execution limits
+
+- Maximum 4 plugin processes run concurrently
+- Maximum 32 plugins may be enabled
+- Each invocation has its manifest timeout; stdout and stderr are independently
+capped at 64 KiB and read concurrently.
+- stdout must be one UTF-8 JSON object with `protocol_version: 1` and at most
+200 lines, each at most 512 Unicode scalar values.
+- Terminal controls are stripped; raw stderr is not shown or logged.
+- Failures show safe status categories and retain last successful output as stale.
+
+### Performance considerations
+
+For PTY performance measurements, use:
+
+```bash
+python3 scripts/tui_perf.py \
+  --binary target/release/opentop \
+  --scenario plugin-ui \
+  --app-arg=--plugin-dir \
+  --app-arg=./examples/plugins \
+  --assert-responsive
+```
+
+Platform support:
+- Built and tested on macOS arm64 (aarch64-apple-darwin)
+- Requires testing on Linux and Windows before release
+- Real SSH comparison pending fleet authorization
+
+## CLI
 
 Dump current snapshot:
 
@@ -79,12 +254,6 @@ Watch mode (stream every N seconds):
 ```bash
 opentop-cli dump --watch 2
 opentop-cli dump --json --watch 1  # NDJSON streaming
-```
-
-Limit top processes in text output:
-
-```bash
-opentop-cli dump --top 20
 ```
 
 ## Dependencies

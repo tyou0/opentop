@@ -131,8 +131,19 @@ pub fn parse(dir: &Path, bytes: &[u8]) -> Result<Manifest, ManifestError> {
 }
 
 fn raw_id(text: &str) -> Option<String> {
-    let value: toml::Value = toml::from_str(text).ok()?;
-    value.get("id")?.as_str().map(ToOwned::to_owned)
+    if let Ok(value) = toml::from_str::<toml::Value>(text) {
+        if let Some(id) = value.get("id").and_then(toml::Value::as_str) {
+            return Some(id.to_owned());
+        }
+    }
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if key.trim() != "id" {
+            return None;
+        }
+        let parsed = toml::from_str::<toml::Value>(&format!("id = {}", value.trim())).ok()?;
+        parsed.get("id")?.as_str().map(ToOwned::to_owned)
+    })
 }
 
 pub fn validate_id(id: &str) -> Result<(), String> {
@@ -146,7 +157,8 @@ pub fn validate_id(id: &str) -> Result<(), String> {
     if id.len() > MAX_ID_LEN {
         return Err(format!("id exceeds {MAX_ID_LEN} bytes"));
     }
-    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')) {
+    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+    {
         return Err("id contains invalid characters".into());
     }
     Ok(())
@@ -189,4 +201,98 @@ fn validate_executable(dir: &Path, executable: &str) -> Result<PathBuf, String> 
         }
     }
     Ok(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("opentop-manifest-{suffix}"));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn manifest(executable: &str) -> String {
+        format!(
+            "protocol_version = 1\nid = \"example.hello\"\nname = \"Hello\"\nversion = \"0.1.0\"\ndescription = \"Example\"\nexecutable = \"{executable}\"\nargs = []\ninterval_ms = 5000\ntimeout_ms = 1000\nmin_height = 5\n"
+        )
+    }
+
+    fn executable(dir: &Path) {
+        let path = dir.join("run.sh");
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn parses_valid_manifest_and_rejects_unknown_fields() {
+        let dir = TempDir::new();
+        executable(&dir.0);
+        let parsed = parse(&dir.0, manifest("run.sh").as_bytes()).unwrap();
+        assert_eq!(parsed.id, "example.hello");
+        assert_eq!(parsed.min_height, 5);
+
+        let invalid = format!("{}extra = true\n", manifest("run.sh"));
+        assert!(parse(&dir.0, invalid.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_bounds_and_executable_escapes() {
+        let dir = TempDir::new();
+        executable(&dir.0);
+        assert!(validate_id("Uppercase").is_err());
+        let invalid_interval =
+            manifest("run.sh").replace("interval_ms = 5000", "interval_ms = 999");
+        assert!(parse(&dir.0, invalid_interval.as_bytes()).is_err());
+        assert!(parse(&dir.0, manifest("../outside").as_bytes()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_executable_symlinks_outside_plugin_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        executable(&outside.0);
+        symlink(outside.0.join("run.sh"), dir.0.join("escape.sh")).unwrap();
+        assert!(parse(&dir.0, manifest("escape.sh").as_bytes()).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_manifest_before_parsing() {
+        assert!(parse(Path::new("."), &vec![b' '; MAX_MANIFEST_BYTES + 1]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn requires_executable_permission_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let path = dir.0.join("run.sh");
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(parse(&dir.0, manifest("run.sh").as_bytes()).is_err());
+    }
 }

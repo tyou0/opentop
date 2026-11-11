@@ -2,16 +2,17 @@
 
 mod discovery;
 mod manifest;
+mod protocol;
 mod runtime;
 
-pub use discovery::{discover, resolve_roots, Discovery, PluginCandidate, MANIFEST_NAME};
+pub use discovery::{Discovery, MANIFEST_NAME, PluginCandidate, discover, resolve_roots};
 pub use manifest::{
-    parse, validate_id, Manifest, ManifestError, MAX_ARG_LEN, MAX_ARGS, MAX_DESCRIPTION_LEN,
-    MAX_ID_LEN, MAX_MANIFEST_BYTES, MAX_NAME_LEN, MAX_VERSION_LEN,
+    MAX_ARG_LEN, MAX_ARGS, MAX_DESCRIPTION_LEN, MAX_ID_LEN, MAX_MANIFEST_BYTES, MAX_NAME_LEN,
+    MAX_VERSION_LEN, Manifest, ManifestError, parse, validate_id,
 };
 pub use runtime::{
-    PluginManager, PluginResult, PluginStatus, MAX_ACTIVE, MAX_ENABLED, MAX_LINE_SCALARS,
-    MAX_LINES, MAX_STREAM_BYTES,
+    MAX_ACTIVE, MAX_ENABLED, MAX_LINE_SCALARS, MAX_LINES, MAX_STREAM_BYTES, PluginManager,
+    PluginResult, PluginStatus,
 };
 
 use serde::{Deserialize, Serialize};

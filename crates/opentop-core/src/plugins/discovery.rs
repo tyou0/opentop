@@ -68,12 +68,20 @@ pub fn discover(roots: &[PathBuf]) -> Discovery {
         let canonical_root = match root.canonicalize() {
             Ok(path) if path.is_dir() => path,
             Ok(_) => {
-                report
-                    .errors
-                    .push(format!("plugin root is not a directory: {}", root.display()));
+                report.errors.push(format!(
+                    "plugin root is not a directory: {}",
+                    root.display()
+                ));
                 continue;
             }
-            Err(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                report.errors.push(format!(
+                    "cannot resolve plugin root {}: {error}",
+                    root.display()
+                ));
+                continue;
+            }
         };
         let entries = match std::fs::read_dir(&canonical_root) {
             Ok(entries) => entries,
@@ -85,11 +93,21 @@ pub fn discover(roots: &[PathBuf]) -> Discovery {
                 continue;
             }
         };
-        let mut dirs: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect();
+        let mut dirs = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        dirs.push(path);
+                    }
+                }
+                Err(error) => report.errors.push(format!(
+                    "cannot read an entry in {}: {error}",
+                    canonical_root.display()
+                )),
+            }
+        }
         dirs.sort();
         for dir in dirs {
             let manifest_path = dir.join(MANIFEST_NAME);
@@ -97,7 +115,12 @@ pub fn discover(roots: &[PathBuf]) -> Discovery {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => continue,
                 Err(error) => {
-                    report.errors.push(error);
+                    report.candidates.push(PluginCandidate {
+                        id: None,
+                        dir,
+                        manifest: None,
+                        error: Some(error),
+                    });
                     continue;
                 }
             };
@@ -120,11 +143,6 @@ pub fn discover(roots: &[PathBuf]) -> Discovery {
                     continue;
                 }
                 seen.insert(id.clone(), dir.clone());
-            }
-            if let Some(error) = &error {
-                report
-                    .errors
-                    .push(format!("{}: {error}", dir.display()));
             }
             report.candidates.push(PluginCandidate {
                 id,
@@ -186,5 +204,150 @@ fn data_home() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("opentop-discovery-{suffix}"));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn add_plugin(root: &Path, folder: &str, id: &str, version: i32, marker: &Path) {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let executable = dir.join("run.sh");
+        std::fs::write(
+            &executable,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(
+            dir.join(MANIFEST_NAME),
+            format!(
+                "protocol_version = {version}\nid = \"{id}\"\nname = \"Example\"\nversion = \"1.0\"\ndescription = \"test\"\nexecutable = \"run.sh\"\ninterval_ms = 5000\ntimeout_ms = 1000\nmin_height = 5\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn higher_priority_duplicate_wins_without_running_code() {
+        let first = TempDir::new();
+        let second = TempDir::new();
+        let marker = first.0.join("executed");
+        add_plugin(&first.0, "one", "example.hello", 1, &marker);
+        add_plugin(&second.0, "two", "example.hello", 1, &marker);
+
+        let report = discover(&[first.0.clone(), second.0.clone()]);
+        assert_eq!(report.candidates.len(), 2);
+        assert!(report.candidates[0].manifest.is_some());
+        assert!(
+            report.candidates[1]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("duplicate plugin id"))
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn invalid_higher_priority_id_blocks_lower_duplicate() {
+        let first = TempDir::new();
+        let second = TempDir::new();
+        let marker = first.0.join("executed");
+        add_plugin(&first.0, "broken", "example.hello", 2, &marker);
+        add_plugin(&second.0, "valid", "example.hello", 1, &marker);
+
+        let report = discover(&[first.0.clone(), second.0.clone()]);
+        assert!(report.candidates[0].manifest.is_none());
+        assert!(
+            report.candidates[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsupported protocol")
+        );
+        assert!(
+            report.candidates[1]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("duplicate plugin id")
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn malformed_higher_priority_manifest_with_readable_id_blocks_fallback() {
+        let first = TempDir::new();
+        let second = TempDir::new();
+        let marker = first.0.join("executed");
+        add_plugin(&first.0, "broken", "example.hello", 1, &marker);
+        add_plugin(&second.0, "valid", "example.hello", 1, &marker);
+        let manifest = first.0.join("broken").join(MANIFEST_NAME);
+        let mut text = std::fs::read_to_string(&manifest).unwrap();
+        text.push_str("broken = [\n");
+        std::fs::write(manifest, text).unwrap();
+
+        let report = discover(&[first.0.clone(), second.0.clone()]);
+        assert_eq!(report.candidates[0].id.as_deref(), Some("example.hello"));
+        assert!(
+            report.candidates[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("invalid TOML")
+        );
+        assert!(
+            report.candidates[1]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("duplicate plugin id")
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn cli_roots_precede_config_roots_and_missing_roots_are_harmless() {
+        let base = TempDir::new();
+        let cli = base.0.join("cli plugins");
+        let config = base.0.join("configured plugins");
+        let roots = resolve_roots(
+            std::slice::from_ref(&cli),
+            &["configured plugins".into()],
+            Some(&base.0),
+        );
+        assert_eq!(roots[0], cli);
+        assert_eq!(roots[1], config);
+
+        let missing = discover(&[base.0.join("does-not-exist")]);
+        assert!(missing.candidates.is_empty());
+        assert!(missing.errors.is_empty());
     }
 }

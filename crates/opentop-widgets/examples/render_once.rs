@@ -9,15 +9,27 @@ use std::time::Duration;
 use opentop_core::{MonitorConfig, MonitorHandle};
 use opentop_theme::Theme;
 use opentop_widgets::{
-    battery::BatteryWidget, connections::ConnectionsSummaryWidget, cpu::CpuCoreBars,
-    cpu::CpuFreqTiers, cpu::CpuGraph, disks::DiskHealthCard, disks::DiskUsageList,
-    footer::{FooterKeybinds, Keybind}, header::HeaderBar, memory::MemGauge,
-    memory::SwapBar, network::NetSparklines, network::NetTable, processes::ProcessTable,
-    processes::ProcessTableState, sensors::PowerPanel, sensors::SensorsPanel,
+    battery::BatteryWidget,
+    connections::ConnectionsSummaryWidget,
+    cpu::CpuCoreBars,
+    cpu::CpuFreqTiers,
+    cpu::CpuGraph,
+    disks::DiskHealthCard,
+    disks::DiskUsageList,
+    footer::{FooterKeybinds, Keybind},
+    header::HeaderBar,
+    memory::MemGauge,
+    memory::SwapBar,
+    network::NetSparklines,
+    network::NetTable,
+    processes::ProcessTable,
+    processes::ProcessTableState,
+    sensors::PowerPanel,
+    sensors::SensorsPanel,
 };
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::Terminal;
 
 struct Options {
     theme: String,
@@ -116,13 +128,7 @@ fn draw_dashboard(
     ])
     .split(area);
 
-    frame.render_widget(
-        HeaderBar {
-            snapshot,
-            theme,
-        },
-        rows[0],
-    );
+    frame.render_widget(HeaderBar { snapshot, theme }, rows[0]);
 
     let row1 = Layout::horizontal([
         Constraint::Ratio(2, 4), // cpu graph
@@ -139,28 +145,11 @@ fn draw_dashboard(
         },
         row1[0],
     );
-    frame.render_widget(
-        CpuCoreBars {
-            snapshot,
-            theme,
-        },
-        row1[1],
-    );
-    let memory_column = Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(row1[2]);
-    frame.render_widget(
-        MemGauge {
-            snapshot,
-            theme,
-        },
-        memory_column[0],
-    );
-    frame.render_widget(
-        SwapBar {
-            snapshot,
-            theme,
-        },
-        memory_column[1],
-    );
+    frame.render_widget(CpuCoreBars { snapshot, theme }, row1[1]);
+    let memory_column =
+        Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(row1[2]);
+    frame.render_widget(MemGauge { snapshot, theme }, memory_column[0]);
+    frame.render_widget(SwapBar { snapshot, theme }, memory_column[1]);
 
     let row2 = Layout::horizontal([
         Constraint::Ratio(3, 10), // sensors
@@ -186,13 +175,7 @@ fn draw_dashboard(
         },
         row2[1],
     );
-    frame.render_widget(
-        CpuFreqTiers {
-            snapshot,
-            theme,
-        },
-        row2[2],
-    );
+    frame.render_widget(CpuFreqTiers { snapshot, theme }, row2[2]);
     frame.render_widget(
         BatteryWidget {
             snapshot,
@@ -234,7 +217,8 @@ fn draw_dashboard(
         row3[2],
     );
 
-    let row4 = Layout::horizontal([Constraint::Ratio(6, 10), Constraint::Ratio(4, 10)]).split(rows[4]);
+    let row4 =
+        Layout::horizontal([Constraint::Ratio(6, 10), Constraint::Ratio(4, 10)]).split(rows[4]);
     let mut process_state = ProcessTableState::default();
     frame.render_stateful_widget(
         ProcessTable {

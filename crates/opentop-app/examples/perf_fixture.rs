@@ -15,8 +15,11 @@ use std::time::{Duration, Instant};
 use opentop_app::runtime::{PerfRecorder, RuntimeOptions};
 use opentop_app::state::App;
 use opentop_app::terminal::{TerminalSession, install_panic_hook};
+use opentop_app::widgets::WidgetDescriptor;
+use opentop_app::widgets::WidgetId;
 use opentop_core::collectors::{Collector, CollectorUpdate};
 use opentop_core::monitor::CollectorSpec;
+use opentop_core::plugins::{Discovery, Manifest, PluginCandidate, parse as parse_plugin_manifest};
 use opentop_core::{
     Availability, BatteryInfo, ConnectionsSummary, CoreInfo, CpuTier, DiskHealth, DiskUsageInfo,
     FanReading, LoadAverage, MemoryInfo, MonitorConfig, MonitorHandle, NetworkInterface,
@@ -65,15 +68,39 @@ fn main() -> io::Result<()> {
 
     install_panic_hook();
     let mut session = TerminalSession::new()?;
+    if scenario == "terminal-panic" {
+        panic!("synthetic terminal cleanup test");
+    }
 
     let mut app = App::new();
+    if scenario == "slow-transport" {
+        app.set_focus(WidgetId::builtin("processes"));
+    }
+    if scenario == "blocked-plugin" {
+        let (report, ids) = plugin_fixture(&control)?;
+        for candidate in &report.candidates {
+            if let Some(manifest) = &candidate.manifest {
+                app.catalog.insert(WidgetDescriptor {
+                    id: WidgetId::plugin(&manifest.id),
+                    label: manifest.name.clone(),
+                    description: manifest.description.clone(),
+                    source: "performance fixture".into(),
+                    available: true,
+                    status: Some("waiting".into()),
+                    min_height: manifest.min_height,
+                });
+            }
+        }
+        app.plugin_report = report;
+        app.set_enabled_widgets(ids);
+    }
     let collector_perf = perf.clone();
     let collector_control = control.clone();
     let interval = Duration::from_millis(250);
     let monitor = MonitorHandle::start_with_collectors(
         MonitorConfig {
             history_len: 120,
-            top_processes: 8,
+            top_processes: 32,
             smart_enabled: false,
             connections_enabled: false,
             ..Default::default()
@@ -96,6 +123,60 @@ fn main() -> io::Result<()> {
     drop(session);
     drop(monitor);
     result
+}
+
+fn plugin_fixture(control_dir: &Path) -> io::Result<(Discovery, Vec<WidgetId>)> {
+    #[cfg(not(unix))]
+    {
+        let _ = control_dir;
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "plugin fixture needs Unix",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = control_dir.join("plugins");
+        let mut candidates = Vec::new();
+        let mut ids = Vec::new();
+        for index in 0..4 {
+            let id = format!("fixture.blocked{index}");
+            let dir = root.join(&id);
+            std::fs::create_dir_all(&dir)?;
+            let marker = control_dir.join(format!("plugin-started-{index}"));
+            let release = control_dir.join(format!("plugin-release-{index}"));
+            let executable = dir.join("fixture.sh");
+            let script = format!(
+                "#!/bin/sh\nprintf started > '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nprintf '%s\\n' '{{\"protocol_version\":1,\"lines\":[\"plugin-{index}\"]}}'\n",
+                marker.display(),
+                release.display()
+            );
+            std::fs::write(&executable, script)?;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+            let manifest_text = format!(
+                "protocol_version=1\nid=\"{id}\"\nname=\"Plugin {index}\"\nversion=\"1.0\"\ndescription=\"blocked fixture\"\nexecutable=\"fixture.sh\"\nargs=[]\ninterval_ms=15000\ntimeout_ms=10000\nmin_height=5\n"
+            );
+            std::fs::write(dir.join("plugin.toml"), &manifest_text)?;
+            let manifest: Manifest = parse_plugin_manifest(&dir, manifest_text.as_bytes())
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.message))?;
+            ids.push(WidgetId::plugin(&id));
+            candidates.push(PluginCandidate {
+                id: Some(id),
+                dir,
+                manifest: Some(manifest),
+                error: None,
+            });
+        }
+        Ok((
+            Discovery {
+                candidates,
+                errors: Vec::new(),
+            },
+            ids,
+        ))
+    }
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> String {
@@ -311,13 +392,13 @@ fn fill_snapshot(snapshot: &mut Snapshot) {
         ..Default::default()
     }]);
 
-    snapshot.processes = (0..12)
+    snapshot.processes = (0..32)
         .map(|index| ProcessInfo {
             pid: 1000 + index,
             parent_pid: Some(1),
             name: format!("fixture-{index:02}"),
             cmd: format!("fixture-{index:02} --synthetic"),
-            cpu_percent: 40.0 - (index as f32) * 2.5,
+            cpu_percent: (40.0 - index as f32).max(0.5),
             memory_bytes: (64 + index as u64) * 1024 * 1024,
             virtual_memory_bytes: (128 + index as u64) * 1024 * 1024,
             status: "Run".into(),
@@ -337,5 +418,4 @@ fn fill_snapshot(snapshot: &mut Snapshot) {
         udp: 6,
         processes_with_sockets: 4,
     });
-
 }

@@ -61,10 +61,9 @@ fn battery_lines<'t>(theme: &'t Theme, battery: &'t BatteryInfo, width: u16) -> 
         details.push(format!("{cycles} cycles"));
     }
     match (battery.state.as_str(), battery.time_to_full_secs) {
-        ("charging", Some(secs)) if secs > 0 => details.push(format!(
-            "full in {}",
-            units::duration(secs)
-        )),
+        ("charging", Some(secs)) if secs > 0 => {
+            details.push(format!("full in {}", units::duration(secs)))
+        }
         _ => {}
     }
     if let Some(secs) = battery.time_to_empty_secs {

@@ -6,14 +6,18 @@ throttled to simulate a slow transport), injects timestamped keys, and reads
 the timing counters the runtime writes to `--perf-log`.
 
 Scenarios:
-  slow-collector  Fixture collector blocks inside collect for sample 2;
+  slow-collector  Fixture collector blocks inside sample for sample 2;
                   measures key-to-visible-change latency (help overlay).
   idle            Fixed screen, no input; counts draw calls and bytes over
                   --duration seconds after a settle period.
   slow-transport  Process navigation (j) at 5 keys/second over a throttled
                   PTY; measures key-to-output latency.
   startup         Fixture collector blocks its first sample; measures first
-                  UI and quit after the fixture releases the gate.
+                   UI and quit after the fixture releases the gate.
+  blocked-plugin  Fills all four plugin worker slots with blocked synthetic
+                    children; measures key latency, release, and shutdown.
+  terminal-panic  Panics after terminal setup and verifies restoration output.
+  plugin-ui       Enables the repository example through the actual Widgets UI.
   smoke           Runs any binary briefly; records startup and idle bytes.
 
 Examples:
@@ -21,6 +25,10 @@ Examples:
       --scenario slow-collector --assert-responsive
   python3 scripts/tui_perf.py --binary target/release/examples/perf_fixture \\
       --scenario idle --assert-idle
+  python3 scripts/tui_perf.py --binary target/release/examples/perf_fixture \\
+      --scenario blocked-plugin --assert-responsive
+  python3 scripts/tui_perf.py --binary target/release/opentop --scenario plugin-ui \\
+      --app-arg=--plugin-dir --app-arg=./examples/plugins --assert-responsive
   python3 scripts/tui_perf.py --binary target/release/opentop --scenario smoke
 
 The reported budgets mirror docs/IMPLEMENTATION_PLAN.md: slow-collector p95
@@ -36,6 +44,7 @@ import math
 import os
 import pathlib
 import pty
+import re
 import select
 import shutil
 import struct
@@ -46,7 +55,10 @@ import termios
 import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-FIXTURE_SCENARIOS = {"slow-collector", "idle", "slow-transport", "startup"}
+ANSI_CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
+FIXTURE_SCENARIOS = {
+    "slow-collector", "idle", "slow-transport", "startup", "blocked-plugin", "terminal-panic"
+}
 GATED_SAMPLES = range(2, 3)
 IDLE_TAIL = b"\x1b[39m\x1b[49m\x1b[59m\x1b[0m\x1b[?25l"
 
@@ -83,13 +95,25 @@ class Throttle:
 
 
 class PtySession:
-    def __init__(self, argv: list[str], cols: int, rows: int, throttle_bps: int) -> None:
+    def __init__(
+        self,
+        argv: list[str],
+        cols: int,
+        rows: int,
+        throttle_bps: int,
+        env_overrides: dict[str, str] | None = None,
+        env_remove: tuple[str, ...] = (),
+    ) -> None:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
         env["COLUMNS"] = str(cols)
         env["LINES"] = str(rows)
+        for name in env_remove:
+            env.pop(name, None)
+        if env_overrides:
+            env.update(env_overrides)
         self.proc = subprocess.Popen(
             argv,
             stdin=slave,
@@ -209,6 +233,8 @@ class PtySession:
     def release_all(self, control_dir: pathlib.Path) -> None:
         for sample in [1, *GATED_SAMPLES]:
             self.write_control(control_dir / f"release-{sample}")
+        for plugin in range(4):
+            self.write_control(control_dir / f"plugin-release-{plugin}")
 
     def close(self, control_dir: pathlib.Path | None) -> None:
         if control_dir is not None:
@@ -290,11 +316,11 @@ def scenario_slow_collector(session: PtySession, args, control_dir: pathlib.Path
             break
         before = len(session.buf)
         started = session.send(b"?")
-        elapsed, _ = session.wait_for(b"opentop help", args.key_timeout, since=before)
+        elapsed, _ = session.wait_for(b"Keyboard", args.key_timeout, since=before)
         session.write_control(control_dir / f"release-{sample}")
         if elapsed is None:
             missing += 1
-            session.wait_for(b"opentop help", 3.0, since=before)
+            session.wait_for(b"Keyboard", 3.0, since=before)
         latencies.append((time.monotonic() - started) * 1000)
         session.drain_for(0.3)
         session.send(b"?")
@@ -359,22 +385,149 @@ def scenario_slow_transport(session: PtySession, args, control_dir: pathlib.Path
 
 def scenario_startup(session: PtySession, args, control_dir: pathlib.Path, events_path: pathlib.Path):
     metrics: dict = {"scenario": "startup"}
-    while time.monotonic() - session.spawn_time < args.startup_release_delay:
-        session.pump(0.05)
-    session.write_control(control_dir / "release-1")
-
     wait_started = time.monotonic()
-    elapsed, _ = session.wait_for(b"perf-fixture", args.startup_timeout)
+    elapsed, _ = session.wait_for(b"unknown host", args.startup_timeout)
     if elapsed is None:
         metrics["first_ui_ms"] = None
     else:
         metrics["first_ui_ms"] = (wait_started - session.spawn_time + elapsed) * 1000
+    first_draw = next(
+        (line for line in events_path.read_text(encoding="utf-8").splitlines() if " event=draw" in line),
+        None,
+    )
+    metrics["first_draw_ms"] = (
+        int(first_draw.split("t_us=", 1)[1].split()[0]) / 1000 if first_draw else None
+    )
+
+    while time.monotonic() - session.spawn_time < args.startup_release_delay:
+        session.pump(0.05)
+    session.write_control(control_dir / "release-1")
+    session.wait_for(b"perf-fixture", args.startup_timeout)
 
     quit_sent = session.send(b"q")
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline and session.proc.poll() is None:
         session.pump(0.05)
     metrics["quit_ms"] = (time.monotonic() - quit_sent) * 1000 if session.proc.poll() is not None else None
+    session.pump(0.05)
+    metrics["terminal_restored"] = (
+        b"\x1b[?1049l" in session.buf and b"\x1b[?25h" in session.buf
+    )
+    return metrics
+
+
+def scenario_blocked_plugin(session: PtySession, args, control_dir: pathlib.Path, events_path: pathlib.Path):
+    metrics: dict = {"scenario": "blocked-plugin"}
+    first = session.wait_for(b"perf-fixture", 10.0)[0]
+    metrics["first_output_ms"] = first * 1000 if first is not None else None
+    started = all(
+        wait_for_file(control_dir / f"plugin-started-{index}", 5.0, session)
+        for index in range(4)
+    )
+    metrics["all_workers_started"] = started
+    before = len(session.buf)
+    key_time = session.send(b"?")
+    response, _ = session.wait_for(b"Keyboard", args.key_timeout, since=before)
+    metrics["key_ms"] = (time.monotonic() - key_time) * 1000 if response is not None else None
+    metrics["missing_changes"] = int(response is None)
+    session.release_all(control_dir)
+    session.send(b"\x1b")
+    visible, _ = session.wait_for(b"plugin-0", 3.0)
+    metrics["plugin_visible"] = visible is not None
+    quit_sent = session.send(b"q")
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and session.proc.poll() is None:
+        session.pump(0.05)
+    metrics["quit_ms"] = (time.monotonic() - quit_sent) * 1000 if session.proc.poll() is not None else None
+    return metrics
+
+
+def scenario_terminal_panic(session: PtySession, args, control_dir, events_path):
+    session.wait_for_output(3.0, 0)
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and session.proc.poll() is None:
+        session.pump(0.05)
+    session.pump(0.05)
+    return {
+        "terminal_restored": b"\x1b[?1049l" in session.buf and b"\x1b[?25h" in session.buf,
+        "exit_code": session.proc.returncode,
+    }
+
+
+def scenario_plugin_ui(session: PtySession, args, control_dir, events_path):
+    metrics: dict = {"scenario": "plugin-ui"}
+    first, _ = session.wait_for(b"up ", 10.0)
+    metrics["first_ui_ms"] = first * 1000 if first is not None else None
+    session.send(b"w")
+    picker, _ = session.wait_for(b"Widgets", 3.0)
+    if picker is None:
+        metrics.update(plugin_selected=False, plugin_visible=False, config_saved=False)
+        return metrics
+
+    selection_start = len(session.buf)
+    selected = False
+    for _ in range(100):
+        if b"Plugin: runs" in session.buf[selection_start:]:
+            selected = True
+            break
+        session.send(b"j")
+        session.pump(0.05)
+    metrics["plugin_selected"] = selected
+    metrics["plugin_label_seen"] = b"Hello" in session.buf[selection_start:]
+    if not selected:
+        metrics.update(plugin_visible=False, config_saved=False)
+        return metrics
+
+    session.send(b" ")
+    session.send(b"\r")
+    panel_start = len(session.buf)
+    expected_words = (b"Hello", b"from", b"OpenTop")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not all(
+        word in session.buf[panel_start:] for word in expected_words
+    ):
+        session.pump(0.02)
+    visible_text = ANSI_CSI.sub(b"", session.buf[panel_start:])
+    metrics["plugin_visible"] = all(word in visible_text for word in expected_words)
+    panel_output = session.buf[panel_start:]
+    status_markers = [b"updated", b"timed out", b"exit code", b"invalid output", b"output limit exceeded", b"missing plugin", b"waiting"]
+    metrics["plugin_status"] = next(
+        (marker.decode("ascii") for marker in status_markers if marker in panel_output),
+        "unseen",
+    )
+    metrics["plugin_words_seen"] = [
+        marker.decode("ascii")
+        for marker in (b"Hello", b"from", b"OpenTop")
+        if marker in panel_output
+    ]
+    metrics["config_saved"] = (control_dir.parent / "config.toml").exists()
+    quit_sent = session.send(b"q")
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and session.proc.poll() is None:
+        session.pump(0.05)
+    metrics["quit_ms"] = (time.monotonic() - quit_sent) * 1000 if session.proc.poll() is not None else None
+
+    restart = PtySession(
+        [str(args.binary_path), *args.app_arg, "--config", str(control_dir.parent / "config.toml")],
+        cols=args.cols,
+        rows=args.rows,
+        throttle_bps=0,
+        env_overrides={
+            "HOME": str(control_dir.parent / "home"),
+            "XDG_DATA_HOME": str(control_dir.parent / "xdg-data"),
+        },
+        env_remove=("OPENTOP_PLUGIN_PATH",),
+    )
+    try:
+        restart_deadline = time.monotonic() + 5.0
+        expected = (b"from", b"OpenTop")
+        while time.monotonic() < restart_deadline and not all(
+            word in restart.buf for word in expected
+        ):
+            restart.pump(0.05)
+        metrics["restart_plugin_visible"] = all(word in restart.buf for word in expected)
+    finally:
+        restart.close(None)
     return metrics
 
 
@@ -396,6 +549,9 @@ SCENARIOS = {
     "idle": scenario_idle,
     "slow-transport": scenario_slow_transport,
     "startup": scenario_startup,
+    "blocked-plugin": scenario_blocked_plugin,
+    "terminal-panic": scenario_terminal_panic,
+    "plugin-ui": scenario_plugin_ui,
     "smoke": scenario_smoke,
 }
 
@@ -427,6 +583,35 @@ def evaluate(args, metrics: dict) -> list[tuple[str, bool, str]]:
         quit_ms = metrics.get("quit_ms")
         checks.append(("first UI <= 200 ms", first is not None and first <= 200, f"first={fmt(first)} ms"))
         checks.append(("quit <= 200 ms", quit_ms is not None and quit_ms <= 200, f"quit={fmt(quit_ms)} ms"))
+        checks.append((
+            "terminal restored on quit",
+            metrics.get("terminal_restored") is True,
+            f"restored={metrics.get('terminal_restored')}",
+        ))
+    if args.assert_responsive and args.scenario == "blocked-plugin":
+        key_ms = metrics.get("key_ms")
+        checks.append(("all four worker slots started", metrics.get("all_workers_started") is True,
+                       f"started={metrics.get('all_workers_started')}"))
+        checks.append(("key <= 50 ms", key_ms is not None and key_ms <= 50,
+                       f"key={fmt(key_ms)} ms"))
+        checks.append(("visible plugin result after release", metrics.get("plugin_visible") is True,
+                       f"visible={metrics.get('plugin_visible')}"))
+        checks.append(("quit <= 200 ms", metrics.get("quit_ms") is not None and metrics["quit_ms"] <= 200,
+                       f"quit={fmt(metrics.get('quit_ms'))} ms"))
+    if args.assert_responsive and args.scenario == "terminal-panic":
+        checks.append(("panic exits nonzero", metrics.get("exit_code") not in (None, 0),
+                       f"exit_code={metrics.get('exit_code')}"))
+        checks.append(("terminal restored during panic", metrics.get("terminal_restored") is True,
+                       f"restored={metrics.get('terminal_restored')}"))
+    if args.assert_responsive and args.scenario == "plugin-ui":
+        checks.append(("example selected in picker", metrics.get("plugin_selected") is True,
+                       f"selected={metrics.get('plugin_selected')}"))
+        checks.append(("plugin output visible", metrics.get("plugin_visible") is True,
+                       f"visible={metrics.get('plugin_visible')}"))
+        checks.append(("config saved", metrics.get("config_saved") is True,
+                       f"saved={metrics.get('config_saved')}"))
+        checks.append(("plugin restored on restart", metrics.get("restart_plugin_visible") is True,
+                       f"restart_visible={metrics.get('restart_plugin_visible')}"))
     if args.assert_idle and args.scenario == "idle":
         checks.append(
             ("zero draws in window",
@@ -467,6 +652,8 @@ def main() -> int:
                         help="startup scenario: seconds before releasing the first-sample gate")
     parser.add_argument("--startup-timeout", type=float, default=6.0)
     parser.add_argument("--perf-log", type=pathlib.Path, default=None)
+    parser.add_argument("--app-arg", action="append", default=[],
+                        help="extra argument passed to opentop in plugin-ui scenario")
     parser.add_argument("--assert-responsive", action="store_true")
     parser.add_argument("--assert-idle", action="store_true")
     args = parser.parse_args()
@@ -477,6 +664,7 @@ def main() -> int:
     if not binary.exists():
         print(f"error: binary not found: {binary}", file=sys.stderr)
         return 2
+    args.binary_path = binary
     if args.scenario in FIXTURE_SCENARIOS and "perf_fixture" not in binary.name:
         print(
             f"error: scenario {args.scenario} needs the perf_fixture example "
@@ -490,9 +678,14 @@ def main() -> int:
     control_dir = workdir / "control"
     control_dir.mkdir()
     events_path = args.perf_log or (workdir / "perf.log")
+    if args.scenario == "plugin-ui":
+        (workdir / "config.toml").write_text("schema_version = 1\nwidgets = []\n", encoding="utf-8")
 
     argv = [str(binary), "--scenario", args.scenario, "--control-dir", str(control_dir),
             "--perf-log", str(events_path)] if args.scenario in FIXTURE_SCENARIOS else [str(binary)]
+    if args.scenario == "plugin-ui":
+        argv.extend(args.app_arg)
+        argv.extend(["--config", str(workdir / "config.toml")])
 
     session = None
     try:
@@ -501,6 +694,11 @@ def main() -> int:
             cols=args.cols,
             rows=args.rows,
             throttle_bps=args.throttle_bps if args.scenario == "slow-transport" else 0,
+            env_overrides={
+                "HOME": str(workdir / "home"),
+                "XDG_DATA_HOME": str(workdir / "xdg-data"),
+            } if args.scenario == "plugin-ui" else None,
+            env_remove=("OPENTOP_PLUGIN_PATH",) if args.scenario == "plugin-ui" else (),
         )
         metrics = SCENARIOS[args.scenario](session, args, control_dir, events_path)
         events = read_events(events_path)

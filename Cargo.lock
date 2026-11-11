@@ -1355,7 +1355,9 @@ dependencies = [
  "opentop-theme",
  "opentop-widgets",
  "ratatui",
+ "serde",
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -1373,6 +1375,7 @@ version = "0.1.0"
 dependencies = [
  "macmon",
  "netstat2",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "starship-battery",

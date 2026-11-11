@@ -64,7 +64,11 @@ impl Widget for DiskUsageList<'_> {
                 )];
                 spans.extend(mini_bar(theme, disk.usage_percent, bar_width, color));
                 spans.push(Span::styled(
-                    format!(" {:>3.0}% {:>8}", disk.usage_percent, units::bytes(disk.used_bytes)),
+                    format!(
+                        " {:>3.0}% {:>8}",
+                        disk.usage_percent,
+                        units::bytes(disk.used_bytes)
+                    ),
                     Style::default().fg(theme.fg),
                 ));
                 if self.config.show_rates {
@@ -120,7 +124,7 @@ fn health_detail_lines<'t>(theme: &'t Theme, drive: &'t DiskHealth) -> Vec<Line<
             pad_truncate(
                 match &drive.model {
                     Some(m) if !m.is_empty() => m,
-                    _ => &drive.device
+                    _ => &drive.device,
                 },
                 24,
             ),

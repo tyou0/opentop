@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{DiskKind, Disks};
 
-use super::{percent, Collector, CollectorUpdate};
+use super::{Collector, CollectorUpdate, percent};
 use crate::snapshot::DiskUsageInfo;
 
 /// Mounted filesystem usage plus per-volume read/write rates, using sysinfo.

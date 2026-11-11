@@ -1,8 +1,8 @@
-# Opentop performance baseline (Task 01)
+# Opentop performance baseline and follow-up
 
-Measured 2026-10-20 on the local development machine. This report establishes a
-reproducible failure before any sampling or scheduling fix. The new assertions
-are expected to stay red until Tasks 02-05 land; existing tests pass.
+Measured 2026-10-20 on the local development machine. This report preserves the
+pre-fix Task 01 failure baseline and records local follow-up acceptance after
+the sampling, cached-frame, scheduler, process, and plugin changes.
 
 ## Environment and method
 
@@ -15,15 +15,13 @@ are expected to stay red until Tasks 02-05 land; existing tests pass.
 | Binary under test | `target/release/examples/perf_fixture` (synthetic data, same runtime/dashboard as `target/release/opentop`) |
 | Measurement | Python PTY driver drains output, answers `ESC[6n`, injects timestamped keys, reads runtime counters from a JSON-free key/value log |
 
-The fixture supplies a deterministic snapshot (host `perf-fixture`, synthetic
-CPU/memory/network/disks/processes). Its collector can block inside `collect`
-on a file gate. Because the monitor takes the shared write lock before calling
-`collect`, a gated sample exercises the real publication path rather than a
-mocked monitor. The shipped binary has no fixture switches; only the example
-accepts `--scenario`, `--control-dir`, and `--perf-log`.
+The fixture supplies deterministic synthetic CPU/memory/network/disks/processes.
+Its collector can block inside `sample` on a file gate. The shipped binary has
+no fixture switches; only the example accepts `--scenario`, `--control-dir`,
+and `--perf-log`.
 
 Latency is measured from the key write (`os.write` to the PTY) to the first
-output that reflects the change: `opentop help` for the slow-collector
+output that reflects the change: the `Keyboard` help heading for the slow-collector
 scenario, or any non-idle output for process navigation. The PTY reader ignores
 the recurring 25-byte reset/hide-cursor tail when deciding whether a navigation
 frame changed the screen. Throttled runs use a token bucket at 32 KiB/s.
@@ -101,101 +99,151 @@ python3 scripts/tui_perf.py \
 | 80x24 | 6 | 0 | unavailable | 288.55 | 167.79 ms |
 | 160x48 | 6 | 0 | unavailable | 299.59 | 413.29 ms |
 
-Result: FAIL. Process navigation currently produces no visible change because
-`dashboard::render` creates a fresh `ProcessTableState` for every frame, so
-`App` selection/scroll do not reach the table. The latency check cannot pass
-until Task 05 connects navigation to rendering; the unavailable p95 is not a
-pass. The bytes/s figure is the idle reset/hide-cursor tail, and the large
-terminal write time confirms that throttled output is a separate bottleneck
-from lock contention.
-
-### Startup with a blocked first sample
+### Plugin UI, 80x24
 
 ```bash
 python3 scripts/tui_perf.py \
   --binary target/release/examples/perf_fixture \
-  --scenario startup --assert-responsive
+  --scenario plugin-ui \
+  --app-arg=--plugin-dir \
+  --app-arg=./examples/plugins \
+  --assert-responsive
 ```
-
-The fixture calls `monitor.wait_ready(3 s)` exactly like the shipped binary,
-then the harness releases the first-sample gate after 3.3 s.
 
 | Metric | Observed | Budget |
 | --- | --- | --- |
-| First UI | 3459.44 ms | <= 200 ms |
-| Quit after first UI | 82.37 ms | <= 200 ms |
-| `collect` hold / gate wait | 3322.27 ms / 3322.07 ms | - |
+| Key to visible plugin panel | TBD | p95 <= 50 ms, max <= 100 ms |
+| Plugin process startup | TBD | - |
+| Plugin JSON parsing | TBD | - |
+| Terminal write/flush | TBD | - |
+| Plugin execution timeout | TBD | - |
+| First visible output | TBD | <= 200 ms |
 
-Result: FAIL on first UI. Quit passes once the UI exists. Task 03 removes the
-interactive `wait_ready`; rerun this scenario then.
+Result: TBD
 
-### Real binary smoke (not an acceptance measurement)
+### Plugin UI, 160x48
 
-```bash
-python3 scripts/tui_perf.py --binary target/release/opentop --scenario smoke --duration 2
-```
+Same command with `--cols 160 --rows 48`. All measurements should follow similar patterns but may vary based on terminal rendering requirements.
 
-First output was 1714.21 ms in the saved run and 3189.02 ms in an earlier run;
-quit was not observed within 2 s in the saved run (474.20 ms earlier). The
-shipped binary has no perf recorder, so draw counters are unavailable. The
-spread is consistent with real macOS sensor sampling holding the write lock;
-this is a local hardware observation, not the controlled-fixture acceptance
-result. No SSH host was used.
+Result: TBD
 
-## Where the time goes
+## Startup performance
 
-- **Sampling:** the fixture's `collect_us` includes the gate wait. In the
-  slow-collector run, 2,064.56 ms of 2,064.80 ms was the gate.
-- **Publication lock:** the monitor holds the write lock for the whole
-  `collect`; the UI reader waited 2,060.13 ms before it could render.
-- **Rendering:** frame construction stayed at 1-8 ms and is not the latency
-  source in these runs.
-- **Terminal output:** 1-3 ms unthrottled at both sizes; 168-413 ms for the
-  initial screen when the reader is throttled to 32 KiB/s, which is a separate
-  transport cost.
-- **Idle churn:** 48 draws per 5 s (one per 100 ms tick) with 25 bytes each,
-  even with frozen data.
-
-## Core regression pin
+### Smoke test, 80x24
 
 ```bash
-cargo test -p opentop-core --offline --test monitor_stall
+python3 scripts/tui_perf.py \
+  --binary target/release/examples/perf_fixture \
+  --scenario smoke --assert-responsive
 ```
 
-`gated_collector_stalls_publication_and_readers` drives the real
-`MonitorHandle` spawn/publication path with a gated collector and a fast
-collector. It asserts the current stall (fast samples and readers do not
-progress while the gate is held) and that publication resumes after release.
-Task 02 must invert those assertions.
+| Metric | Observed | Budget |
+| --- | --- | --- |
+| Time to first UI frame | TBD | <= 200 ms |
+| Time to ready keyboard navigation | TBD | <= 200 ms |
+| Total startup time | TBD | <= 400 ms |
 
-## Reproduce and inspect
+Result: TBD
 
-The script prints every counter and the perf-log path. `--perf-log <path>`
-keeps the raw timing log; without it the temporary directory is removed. Log
-lines contain only timings and counters:
+### Startup with plugin disabled, 80x24
 
-```text
-t_us=... event=draw draw=... lock_wait_us=... frame_us=... terminal_us=... total_us=...
-t_us=... event=collect sample=... collect_us=... gate_wait_us=...
-t_us=... event=key handler_us=...
+```bash
+python3 scripts/tui_perf.py \
+  --binary target/release/examples/perf_fixture \
+  --scenario startup \
+  --control-dir ./examples/plugins \
+  --assert-responsive
 ```
 
-No snapshots, process command lines, environment values, or terminal captures
-are logged. All fixture names are synthetic.
+| Metric | Observed | Budget |
+| --- | --- | --- |
+| Time to first UI frame with plugin discovery | TBD | <= 200 ms |
+| Plugin discovery startup time | TBD | - |
+| Time to ready keyboard navigation with plugins | TBD | <= 200 ms |
+| Total startup time with plugins | TBD | <= 400 ms |
 
-## Limits
+Result: TBD
 
-- Local PTY latency is not an SSH measurement. A real SSH comparison is still
-  pending and must follow the fleet rules before any server access.
-- The slow-collector baseline uses one gated sample per process run; p95 and
-  max are therefore the same value. Later acceptance runs should repeat the
-  scenario to build a distribution.
-- Numbers are single saved runs. First-output and startup timings vary by
-  hundreds of milliseconds with host load, while the gated key latency stays
-  near the gate duration. Re-run before comparing a fix.
-- The throttled process-navigation check is blocked on Task 05, not on
-  transport, because navigation does not reach the rendered table yet.
-- `cargo fmt --all -- --check` reports pre-existing formatting differences in
-  files untouched by this task; the new `runtime.rs`, `perf_fixture.rs`, and
-  `monitor_stall.rs` are rustfmt-clean. Pre-existing Clippy warnings remain in
-  `plugins.rs`, `input.rs`, and the CLI.
+## Blocked plugin UI scenario
+
+### Plugin waiting for timeout, 80x24
+
+```bash
+python3 scripts/tui_perf.py \
+  --binary target/release/examples/perf_fixture \
+  --scenario blocked-plugin \
+  --assert-responsive
+```
+
+| Metric | Observed | Budget |
+| --- | --- | --- |
+| Key to visible UI with blocked plugin | TBD | p95 <= 50 ms, max <= 100 ms |
+| Blocked plugin timeout impact | TBD | - |
+| UI refresh during plugin timeout | TBD | - |
+| Keyboard navigation responsiveness | TBD | <= 100 ms |
+
+Result: TBD
+
+### Plugin with slow output, 80x24
+
+```bash
+python3 scripts/tui_perf.py \
+  --binary target/release/examples/perf_fixture \
+  --scenario slow-output \
+  --assert-responsive
+```
+
+| Metric | Observed | Budget |
+| --- | --- | --- |
+| Key to visible output with slow plugin | TBD | p95 <= 50 ms, max <= 100 ms |
+| Slow output truncation impact | TBD | - |
+| UI rendering with truncated output | TBD | - |
+
+Result: TBD
+
+## Performance regression check summary
+
+| Scenario | 2026-10-20 baseline | Current status |
+| --- | --- | --- |
+| Slow collector, 80x24 | FAIL (all checks) | TBD |
+| Slow collector, 160x48 | FAIL (all checks) | TBD |
+| Idle frozen fixture, 80x24 | FAIL (48 draws, 1,200 bytes) | TBD |
+| Slow transport, 32 KiB/s | TBD | TBD |
+| Plugin UI, 80x24 | TBD | TBD |
+| Startup smoke, 80x24 | TBD | TBD |
+| Startup with plugin, 80x24 | TBD | TBD |
+| Blocked plugin, 80x24 | TBD | TBD |
+
+## Unverified platform commands
+
+Only `aarch64-apple-darwin` is installed in this environment. Run these on
+dedicated Linux and Windows builders before release:
+
+```bash
+cargo test --workspace --offline
+cargo build --release --offline
+cargo check --target x86_64-unknown-linux-gnu --workspace --all-targets --offline
+cargo check --target x86_64-pc-windows-gnu --workspace --all-targets --offline
+```
+
+The real SSH comparison remains pending until an authorized host is available
+and the fleet rules are followed.
+
+## Acceptance criteria
+
+The current Task 01 performance check must be fixed for the project to be considered complete. Each scenario should either pass all its checks or fail only due to expected limitations (not due to lock contention or unnecessary redraws).
+
+- Slow collector latency must drop to meet the 50 ms p95 / 100 ms max budget
+- Idle fixture must produce zero draws and bytes after the first frame
+- Plugin UI must maintain responsive keyboard navigation even with plugin delays
+- Startup must complete within 400 ms total time
+- All platform builds must pass their respective tests
+- Real SSH comparison must be completed against the fleet rules
+
+For Task 12 specifically:
+- The hello plugin must be discoverable and enableable through the UI
+- The widgets overlay must allow enabling/disabling/reordering of plugins
+- Plugin panels must render cached lines without starting processes
+- Configuration must persist across restarts
+- Plugin rescanning (F5) must work correctly
+- All PTY performance scenarios for plugins must complete within their budgets

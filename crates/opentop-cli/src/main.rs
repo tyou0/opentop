@@ -2,7 +2,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
-use opentop_core::snapshot::{Availability, Snapshot};
+use opentop_core::snapshot::Snapshot;
 use opentop_core::units;
 use opentop_core::{MonitorConfig, MonitorHandle};
 
@@ -62,7 +62,7 @@ fn dump(args: DumpArgs) -> ExitCode {
                 }
             }
         } else {
-            print_summary(&snapshot, args.top);
+            print_summary(&snapshot);
         }
 
         if args.watch == 0 {
@@ -73,7 +73,7 @@ fn dump(args: DumpArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn print_summary(snapshot: &Snapshot, top: usize) {
+fn print_summary(snapshot: &Snapshot) {
     let system = &snapshot.system;
     println!(
         "opentop — {} ({})",

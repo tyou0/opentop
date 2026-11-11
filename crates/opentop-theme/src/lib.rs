@@ -319,9 +319,7 @@ fn parse_color(value: &str) -> Result<Color, String> {
                 let mut chars = hex.chars();
                 let (r, g, b) = (chars.next(), chars.next(), chars.next());
                 match (r, g, b) {
-                    (Some(r), Some(g), Some(b)) => {
-                        (expand(r), expand(g), expand(b))
-                    }
+                    (Some(r), Some(g), Some(b)) => (expand(r), expand(g), expand(b)),
                     _ => return Err(format!("invalid hex color {value:?}")),
                 }
             }
@@ -370,14 +368,18 @@ mod tests {
 
     #[test]
     fn toml_base_and_name() {
-        let theme = Theme::from_toml(r##"base = "light"
+        let theme = Theme::from_toml(
+            r##"base = "light"
 name = "daylight"
-cursor = 1"##);
+cursor = 1"##,
+        );
         assert!(theme.is_err()); // unknown field rejected
 
-        let theme = Theme::from_toml(r##"base = "light"
-name = "daylight""##)
-            .unwrap();
+        let theme = Theme::from_toml(
+            r##"base = "light"
+name = "daylight""##,
+        )
+        .unwrap();
         assert_eq!(theme.name, "daylight");
         assert_eq!(theme.bg, Theme::light().bg);
     }

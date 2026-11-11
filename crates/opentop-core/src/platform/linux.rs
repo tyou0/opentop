@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use sysinfo::Components;
 
-use super::hwmon::HwmonBackend;
 use super::SensorsBackend;
+use super::hwmon::HwmonBackend;
 use crate::snapshot::{FanReading, SensorsInfo};
 
 #[cfg(feature = "sensors-lm-sensors")]

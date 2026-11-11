@@ -48,7 +48,11 @@ impl CollectorUpdate {
             Self::CpuMemory { cpu, memory } => {
                 let core_usages: Vec<f32> = cpu.cores.iter().map(|c| c.usage_percent).collect();
                 history.push_cpu(cpu.usage_percent, &core_usages);
-                history.push_memory(memory.used_bytes, memory.usage_percent, memory.used_swap_bytes);
+                history.push_memory(
+                    memory.used_bytes,
+                    memory.usage_percent,
+                    memory.used_swap_bytes,
+                );
                 snapshot.cpu = cpu;
                 snapshot.memory = memory;
             }

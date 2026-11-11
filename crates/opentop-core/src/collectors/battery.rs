@@ -32,9 +32,9 @@ impl Collector for BatteryCollector {
         let batteries = match manager.batteries() {
             Ok(batteries) => batteries,
             Err(err) => {
-                return Some(CollectorUpdate::Battery(Availability::unavailable(format!(
-                    "battery query failed: {err}"
-                ))));
+                return Some(CollectorUpdate::Battery(Availability::unavailable(
+                    format!("battery query failed: {err}"),
+                )));
             }
         };
 
@@ -56,17 +56,15 @@ impl Collector for BatteryCollector {
                     .temperature()
                     .map(|t| t.get::<thermodynamic_temperature::degree_celsius>()),
                 cycle_count: battery.cycle_count(),
-                health_percent: Some(
-                    battery.state_of_health().get::<ratio::percent>(),
-                ),
+                health_percent: Some(battery.state_of_health().get::<ratio::percent>()),
                 energy_wh: Some(battery.energy().get::<energy::watt_hour>()),
                 energy_full_wh: Some(battery.energy_full().get::<energy::watt_hour>()),
-                energy_design_wh: Some(
-                    battery.energy_full_design().get::<energy::watt_hour>(),
-                ),
+                energy_design_wh: Some(battery.energy_full_design().get::<energy::watt_hour>()),
                 power_watts: Some(battery.energy_rate().get::<power::watt>()),
                 voltage_volts: None,
-                time_to_full_secs: battery.time_to_full().map(|t| t.get::<time::second>() as u64),
+                time_to_full_secs: battery
+                    .time_to_full()
+                    .map(|t| t.get::<time::second>() as u64),
                 time_to_empty_secs: battery
                     .time_to_empty()
                     .map(|t| t.get::<time::second>() as u64),

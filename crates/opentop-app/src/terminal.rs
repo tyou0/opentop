@@ -21,8 +21,12 @@ impl TerminalSession {
     pub fn new() -> io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        if let Err(err) = execute!(stdout, EnterAlternateScreen, Hide, EnableMouseCapture) {
+        if let Err(err) = execute!(stdout, EnterAlternateScreen) {
             let _ = disable_raw_mode();
+            return Err(err);
+        }
+        if let Err(err) = execute!(stdout, Hide, EnableMouseCapture) {
+            restore_terminal();
             return Err(err);
         }
 

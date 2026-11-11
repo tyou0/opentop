@@ -1,12 +1,15 @@
 use super::manifest::Manifest;
-use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::Read;
-use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use crate::subprocess::{RunError, run_bounded_with_limit};
 
 pub const MAX_ACTIVE: usize = 4;
 pub const MAX_ENABLED: usize = 32;
@@ -51,8 +54,8 @@ struct RuntimePlugin {
 
 struct Active {
     cancel: Arc<AtomicBool>,
-    pid: Arc<Mutex<Option<u32>>>,
     rx: Receiver<RunOutcome>,
+    worker: JoinHandle<()>,
 }
 
 struct RunOutcome {
@@ -90,7 +93,12 @@ impl PluginManager {
                 self.max_enabled
             ));
         }
-        self.stop_all();
+        self.cancel_active();
+        let configured: std::collections::HashSet<String> = manifests
+            .iter()
+            .map(|manifest| manifest.id.clone())
+            .collect();
+        self.latest.retain(|id, _| configured.contains(id));
         self.plugins = manifests
             .into_iter()
             .map(|manifest| RuntimePlugin {
@@ -124,8 +132,12 @@ impl PluginManager {
             }
         }
         for (id, outcome) in finished {
-            self.active.remove(&id);
-            self.apply(outcome);
+            if let Some(active) = self.active.remove(&id) {
+                let _ = active.worker.join();
+            }
+            if !matches!(&outcome.outcome, Err(PluginStatus::Cancelled)) {
+                self.apply(outcome);
+            }
         }
         let now = Instant::now();
         let mut started = self.active.len();
@@ -138,13 +150,10 @@ impl PluginManager {
             }
             plugin.next_due = now + Duration::from_millis(plugin.manifest.interval_ms);
             let cancel = Arc::new(AtomicBool::new(false));
-            let pid = Arc::new(Mutex::new(None));
-            let (tx, rx) = mpsc::channel();
-            spawn_worker(plugin.manifest.clone(), cancel.clone(), pid.clone(), tx);
-            self.active.insert(
-                plugin.manifest.id.clone(),
-                Active { cancel, pid, rx },
-            );
+            let (tx, rx) = mpsc::sync_channel(1);
+            let worker = spawn_worker(plugin.manifest.clone(), cancel.clone(), tx);
+            self.active
+                .insert(plugin.manifest.id.clone(), Active { cancel, rx, worker });
             started += 1;
         }
     }
@@ -154,16 +163,22 @@ impl PluginManager {
     }
 
     pub fn stop(&mut self, id: &str) {
-        if let Some(active) = self.active.remove(id) {
+        if let Some(active) = self.active.get(id) {
             active.cancel.store(true, Ordering::Relaxed);
-            kill_group(&active.pid);
         }
     }
 
     pub fn stop_all(&mut self) {
-        let ids: Vec<String> = self.active.keys().cloned().collect();
-        for id in ids {
-            self.stop(&id);
+        self.cancel_active();
+        let active = std::mem::take(&mut self.active);
+        for (_, active) in active {
+            let _ = active.worker.join();
+        }
+    }
+
+    fn cancel_active(&self) {
+        for active in self.active.values() {
+            active.cancel.store(true, Ordering::Relaxed);
         }
     }
 
@@ -219,41 +234,32 @@ impl Drop for PluginManager {
 fn spawn_worker(
     manifest: Manifest,
     cancel: Arc<AtomicBool>,
-    pid_slot: Arc<Mutex<Option<u32>>>,
-    tx: mpsc::Sender<RunOutcome>,
-) {
+    tx: SyncSender<RunOutcome>,
+) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let outcome = run(&manifest, &cancel, &pid_slot);
+        let outcome = run(&manifest, &cancel);
         let _ = tx.send(RunOutcome {
             id: manifest.id,
             at_ms: crate::now_ms(),
             outcome,
         });
-    });
+    })
 }
 
-fn run(
-    manifest: &Manifest,
-    cancel: &AtomicBool,
-    pid_slot: &Mutex<Option<u32>>,
-) -> Result<Vec<String>, PluginStatus> {
+fn run(manifest: &Manifest, cancel: &AtomicBool) -> Result<Vec<String>, PluginStatus> {
     #[cfg(not(unix))]
     {
-        let _ = (manifest, cancel, pid_slot);
+        let _ = (manifest, cancel);
         return Err(PluginStatus::Unsupported(
             "plugin execution is not supported on this platform".into(),
         ));
     }
     #[cfg(unix)]
-    run_unix(manifest, cancel, pid_slot)
+    run_unix(manifest, cancel)
 }
 
 #[cfg(unix)]
-fn run_unix(
-    manifest: &Manifest,
-    cancel: &AtomicBool,
-    pid_slot: &Mutex<Option<u32>>,
-) -> Result<Vec<String>, PluginStatus> {
+fn run_unix(manifest: &Manifest, cancel: &AtomicBool) -> Result<Vec<String>, PluginStatus> {
     if cancel.load(Ordering::Relaxed) {
         return Err(PluginStatus::Cancelled);
     }
@@ -261,154 +267,215 @@ fn run_unix(
     command
         .args(&manifest.args)
         .current_dir(&manifest.dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .env_clear()
+        .env(
+            "PATH",
+            if cfg!(target_os = "macos") {
+                "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
+            } else {
+                "/usr/bin:/bin:/usr/sbin:/sbin"
+            },
+        );
+    let output = run_bounded_with_limit(
+        &mut command,
+        Duration::from_millis(manifest.timeout_ms),
+        Some(cancel),
+        MAX_STREAM_BYTES,
+    );
+    match output {
+        Ok(output) if !output.status.success() => {
+            Err(PluginStatus::ExitCode(output.status.code().unwrap_or(-1)))
+        }
+        Ok(output) => super::protocol::parse_output(&output.stdout),
+        Err(RunError::Timeout) => Err(PluginStatus::Timeout),
+        Err(RunError::Cancelled) => Err(PluginStatus::Cancelled),
+        Err(RunError::OutputLimit) => Err(PluginStatus::OutputOverflow),
+        Err(RunError::Spawn(_) | RunError::Wait(_)) => Err(PluginStatus::InvalidOutput),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::time::SystemTime;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let suffix = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("opentop-plugin-runtime-{suffix}"));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn script(dir: &Path, name: &str, contents: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, contents).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path
+    }
+
+    fn wait_result(
+        manager: &mut PluginManager,
+        expected: impl Fn(&PluginResult) -> bool,
+    ) -> PluginResult {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            manager.tick(crate::now_ms());
+            if let Some(result) = manager.latest().find(|result| expected(result)) {
+                return result.clone();
+            }
+            assert!(Instant::now() < deadline, "plugin result was not published");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn manifest(dir: &Path, executable: PathBuf) -> Manifest {
+        Manifest {
+            id: "example.hello".into(),
+            name: "Hello".into(),
+            version: "1.0".into(),
+            description: "test".into(),
+            executable,
+            args: Vec::new(),
+            interval_ms: 60_000,
+            timeout_ms: 5_000,
+            min_height: 5,
+            dir: dir.to_path_buf(),
+        }
+    }
+
     #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(_) => return Err(PluginStatus::InvalidOutput),
-    };
-    *pid_slot.lock().unwrap() = Some(child.id());
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let (out_tx, out_rx) = mpsc::sync_channel(1);
-    let (err_tx, err_rx) = mpsc::sync_channel(1);
-    let out_reader = std::thread::spawn(move || {
-        let _ = out_tx.send(read_bounded(stdout));
-    });
-    let err_reader = std::thread::spawn(move || {
-        let _ = err_tx.send(read_bounded(stderr));
-    });
-    let deadline = Instant::now() + Duration::from_millis(manifest.timeout_ms);
-    let mut child_status = None;
-    let mut out = None;
-    let mut err = None;
-    let status = loop {
-        if cancel.load(Ordering::Relaxed) {
-            kill_child(&mut child);
-            break Err(PluginStatus::Cancelled);
-        }
-        if Instant::now() >= deadline {
-            kill_child(&mut child);
-            break Err(PluginStatus::Timeout);
-        }
-        if child_status.is_none() {
-            match child.try_wait() {
-                Ok(Some(status)) => child_status = Some(status.code()),
-                Ok(None) => {}
-                Err(_) => {
-                    kill_child(&mut child);
-                    break Err(PluginStatus::Cancelled);
-                }
-            }
-        }
-        if out.is_none() {
-            out = out_rx.try_recv().ok();
-        }
-        if err.is_none() {
-            err = err_rx.try_recv().ok();
-        }
-        if child_status.is_some() && out.is_some() && err.is_some() {
-            break Ok(child_status.flatten());
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    };
-    if status.is_err() {
-        kill_group(pid_slot);
-    }
-    let _ = out_reader.join();
-    let _ = err_reader.join();
-    *pid_slot.lock().unwrap() = None;
-    let (out, out_overflow) = out.unwrap_or((Vec::new(), true));
-    let (_err, err_overflow) = err.unwrap_or((Vec::new(), true));
-    let code = match status {
-        Ok(Some(code)) => code,
-        Ok(None) => return Err(PluginStatus::InvalidOutput),
-        Err(status) => return Err(status),
-    };
-    if out_overflow || err_overflow {
-        return Err(PluginStatus::OutputOverflow);
-    }
-    if code != 0 {
-        return Err(PluginStatus::ExitCode(code));
-    }
-    parse_output(&out)
-}
+    #[test]
+    fn publishes_success_and_keeps_it_stale_after_failure() {
+        let dir = TempDir::new();
+        let success = script(
+            &dir.0,
+            "success.sh",
+            "#!/bin/sh\nprintf '%s\\n' '{\"protocol_version\":1,\"lines\":[\"hello\"]}'\n",
+        );
+        let failure = script(&dir.0, "failure.sh", "#!/bin/sh\nexit 7\n");
+        let mut manager = PluginManager::new(MAX_ACTIVE, MAX_ENABLED);
+        manager
+            .set_manifests(vec![manifest(&dir.0, success)])
+            .unwrap();
+        manager.tick(crate::now_ms());
+        let success = wait_result(&mut manager, |result| result.status == PluginStatus::Ok);
+        assert_eq!(success.lines, vec!["hello".to_owned()]);
 
-fn read_bounded(mut reader: impl Read) -> (Vec<u8>, bool) {
-    let mut stored = Vec::new();
-    let mut total = 0usize;
-    let mut buffer = [0u8; 8192];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => {
-                total = total.saturating_add(n);
-                if stored.len() < MAX_STREAM_BYTES {
-                    let room = MAX_STREAM_BYTES - stored.len();
-                    stored.extend_from_slice(&buffer[..n.min(room)]);
-                }
-            }
-            Err(_) => break,
+        manager
+            .set_manifests(vec![manifest(&dir.0, failure)])
+            .unwrap();
+        manager.tick(crate::now_ms());
+        let stale = wait_result(&mut manager, |result| {
+            result.status == PluginStatus::ExitCode(7)
+        });
+        assert!(stale.stale());
+        assert_eq!(stale.lines, vec!["hello".to_owned()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn supervisor_enforces_timeout_and_independent_stream_caps() {
+        let dir = TempDir::new();
+        let timeout_path = script(&dir.0, "timeout.sh", "#!/bin/sh\n(sleep 3) & exit 0\n");
+        let mut timeout = manifest(&dir.0, timeout_path);
+        timeout.timeout_ms = 100;
+        assert!(matches!(
+            run(&timeout, &AtomicBool::new(false)),
+            Err(PluginStatus::Timeout)
+        ));
+
+        let stdout_path = script(&dir.0, "stdout.sh", "#!/bin/sh\nprintf '%70000s' ''\n");
+        let stdout_result = run(&manifest(&dir.0, stdout_path), &AtomicBool::new(false));
+        assert_eq!(stdout_result.unwrap_err(), PluginStatus::OutputOverflow);
+
+        let stderr_path = script(&dir.0, "stderr.sh", "#!/bin/sh\nprintf '%70000s' '' >&2\n");
+        assert!(matches!(
+            run(&manifest(&dir.0, stderr_path), &AtomicBool::new(false)),
+            Err(PluginStatus::OutputOverflow)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_running_plugin_cancels_and_reaps_it() {
+        let dir = TempDir::new();
+        let marker = dir.0.join("started");
+        let executable = script(
+            &dir.0,
+            "slow.sh",
+            &format!("#!/bin/sh\ntouch '{}'\nsleep 3\n", marker.display()),
+        );
+        let mut manifest = manifest(&dir.0, executable);
+        manifest.timeout_ms = 5_000;
+        let mut manager = PluginManager::new(MAX_ACTIVE, MAX_ENABLED);
+        manager.set_manifests(vec![manifest]).unwrap();
+        manager.tick(crate::now_ms());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "plugin child did not start");
+            std::thread::sleep(Duration::from_millis(5));
         }
-    }
-    (stored, total > MAX_STREAM_BYTES)
-}
-
-#[derive(Deserialize)]
-struct RawProtocol {
-    protocol_version: i64,
-    lines: Vec<String>,
-}
-
-fn parse_output(bytes: &[u8]) -> Result<Vec<String>, PluginStatus> {
-    let text = std::str::from_utf8(bytes).map_err(|_| PluginStatus::InvalidOutput)?;
-    let raw: RawProtocol = serde_json::from_str(text).map_err(|_| PluginStatus::InvalidOutput)?;
-    if raw.protocol_version != 1 || raw.lines.len() > MAX_LINES {
-        return Err(PluginStatus::InvalidOutput);
-    }
-    let mut lines = Vec::with_capacity(raw.lines.len());
-    for line in raw.lines {
-        let clean = sanitize(&line);
-        if clean.chars().count() > MAX_LINE_SCALARS {
-            return Err(PluginStatus::InvalidOutput);
+        let started = Instant::now();
+        manager.remove("example.hello");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !manager.active.is_empty() {
+            manager.tick(crate::now_ms());
+            assert!(Instant::now() < deadline, "cancelled plugin was not reaped");
+            std::thread::sleep(Duration::from_millis(5));
         }
-        lines.push(clean);
+        assert!(manager.latest().next().is_none());
     }
-    Ok(lines)
-}
 
-fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| {
-            let code = *c as u32;
-            !(code < 0x20 || (0x7f..=0x9f).contains(&code))
-        })
-        .take(MAX_LINE_SCALARS)
-        .collect()
-}
+    #[cfg(unix)]
+    #[test]
+    fn manager_starts_at_most_four_children() {
+        let dir = TempDir::new();
+        let executable = script(&dir.0, "slow.sh", "#!/bin/sh\nsleep 3\n");
+        let manifests = (0..5)
+            .map(|index| {
+                let mut manifest = manifest(&dir.0, executable.clone());
+                manifest.id = format!("example.plugin{index}");
+                manifest
+            })
+            .collect();
+        let mut manager = PluginManager::new(MAX_ACTIVE, MAX_ENABLED);
+        manager.set_manifests(manifests).unwrap();
+        manager.tick(crate::now_ms());
+        assert_eq!(manager.active.len(), MAX_ACTIVE);
+        manager.stop_all();
+        assert!(manager.active.is_empty());
+    }
 
-#[cfg(unix)]
-fn kill_child(child: &mut Child) {
-    kill_group(&Mutex::new(Some(child.id())));
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[cfg(unix)]
-fn kill_group(pid: &Mutex<Option<u32>>) {
-    if let Some(pid) = *pid.lock().unwrap() {
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{pid}")])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+    #[test]
+    fn manager_rejects_more_than_thirty_two_enabled_plugins() {
+        let dir = PathBuf::from("/unused");
+        let manifests = (0..=MAX_ENABLED)
+            .map(|index| {
+                let mut manifest = manifest(&dir, dir.join("plugin"));
+                manifest.id = format!("example.plugin{index}");
+                manifest
+            })
+            .collect();
+        let mut manager = PluginManager::new(MAX_ACTIVE, MAX_ENABLED);
+        assert!(manager.set_manifests(manifests).unwrap_err().contains("32"));
     }
 }

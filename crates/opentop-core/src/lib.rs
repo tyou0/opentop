@@ -17,8 +17,10 @@ pub mod history;
 pub mod monitor;
 pub mod platform;
 pub mod plugins;
+pub mod process_control;
 pub mod smart;
 pub mod snapshot;
+pub mod subprocess;
 pub mod units;
 
 pub use history::{History, Ring};

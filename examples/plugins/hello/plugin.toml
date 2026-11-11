@@ -1,0 +1,10 @@
+protocol_version = 1
+id = "example.hello"
+name = "Hello"
+version = "0.1.0"
+description = "A small example panel that returns static text."
+executable = "hello.py"
+args = []
+interval_ms = 5000
+timeout_ms = 1000
+min_height = 5

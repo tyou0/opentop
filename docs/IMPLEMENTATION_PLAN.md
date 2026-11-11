@@ -302,14 +302,14 @@ Plan prepared 2026-10-20. No application changes were implemented by the plannin
 | Task | Status | Evidence |
 | --- | --- | --- |
 | 01 | Done (baseline red) | `docs/PERFORMANCE.md` records macOS 26.0.1 arm64 baselines at 80x24/160x48. `python3 scripts/tui_perf.py --binary target/release/examples/perf_fixture --scenario slow-collector --assert-responsive` exits 1 without hanging: 2055.37 ms key latency vs <=50 ms p95, with `lock_wait_us=2060132` vs `frame_us=5045` and `terminal_us=1650`. Idle scenario exits 1 with 48 draws/1200 bytes per 5 s; slow transport and startup exit 1 as expected. `cargo test --workspace --offline` passes; `cargo test -p opentop-core --offline --test monitor_stall` passes and pins the current stall for Task 02. Fixture builds via `cargo build --release --offline --example perf_fixture -p opentop-app`; shipped binary has no fixture switches. |
-| 02 | Pending | |
-| 03 | Pending | |
-| 04 | Pending | |
-| 05 | Pending | |
-| 06 | Pending | |
-| 07 | Pending | |
-| 08 | Pending | |
-| 09 | Pending | |
-| 10 | Pending | |
-| 11 | Pending | |
-| 12 | Pending | |
+| 02 | Done | `cargo test -p opentop-core --test monitor_stall --offline` passes both lock-stall/history tests; collectors sample outside the shared lock and publish `CollectorUpdate` under a brief write lock. |
+| 03 | Done (local; cold variance open) | `try_frame_since_never_waits_for_a_busy_writer` passes. Startup fixture passes at 80x24 and 160x48 (latest first UI 20.62/22.85 ms); several 80x24 wall-clock outliers at 396.93-570.08 ms remain documented for Task 12. |
+| 04 | Done (local; macmon caveat) | Deadline-aware `run_bounded` replaces `Command::output()` for smartctl/sensors/nvidia-smi. Timeout, pipe-holding descendant, output cap and cancellation tests pass; PTY probes verify normal quit and panic restoration. Press/repeat/Ctrl-C/BackTab tests pass. Release real-binary quit took 479 ms in smoke and 949 ms in plugin UI because macmon cannot be interrupted mid-sample; that platform limit is documented. |
+| 05 | Done | PID-stable selection, sort tie-breakers, symmetric page movement and table page size are wired. State tests cover sort/shrink/empty/End; TestBackend verifies the highlighted rendered row and pointer hit testing accounts for table offset. |
+| 06 | Done | TOML config, default path/CLI overrides, de-duplication, empty layouts, unknown IDs, atomic save/reload and malformed-file preservation are implemented and tested. |
+| 07 | Done (local) | Catalog-driven row-major layout, shared focus rectangles, mouse hit testing, focused border and 40x12/80x24/120x40/160x48/1x1 TestBackend coverage pass. |
+| 08 | Done | Help/Widgets use an explicit overlay enum; picker toggle/reorder/apply/cancel, modal isolation, F5 rescan routing and config persistence are wired and tested. |
+| 09 | Done (local) | Strict v1 manifest validation and ordered discovery are implemented. Tests cover unknown fields, bounds, oversize, symlink escape, precedence, malformed higher-priority ID, duplicate ID and discovery-never-executes. |
+| 10 | Done (local Unix) | Supervisor uses max four workers/32 enabled, coalesced intervals, bounded concurrent stdout/stderr, timeout/cancel/process-group cleanup, protocol validation, sanitization, latest-only stale results; tests cover success/failure, pipe descendant, output caps, cancel/reap and concurrency. Windows execution is explicitly unsupported. |
+| 11 | Done (local) | Async discovery, enabled-only execution, cached plugin panels, F5 rescan, missing placeholders and replacement cancellation are integrated. App test proves no execution before Apply and missing state after removal; blocked-plugin PTY acceptance passes at 80x24/160x48. |
+| 12 | Partial (platform checks pending) | Python hello plugin, `docs/PLUGINS.md`, README controls, actual Widgets enable/save/restart PTY flow, and before/after PTY results are present. Workspace tests, release build, idle/slow-collector/slow-transport/blocked-plugin/panic probes pass on macOS. Startup passes most runs but several 80x24 wall-clock outliers exceed budget. Only `aarch64-apple-darwin` is installed; Linux/Windows commands are in `docs/PERFORMANCE.md`. Real SSH remains pending fleet authorization. Workspace formatting and Clippy remain red on formatting differences and existing warnings. |

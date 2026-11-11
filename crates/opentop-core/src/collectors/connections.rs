@@ -1,13 +1,13 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
+use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
 
-use super::{sleep_until, Collector, CollectorUpdate};
+use super::{Collector, CollectorUpdate, sleep_until};
 use crate::snapshot::{Availability, ConnectionsSummary};
 
 /// Aggregate TCP/UDP socket counts, using netstat2.

@@ -157,13 +157,19 @@ impl Widget for PowerPanel<'_> {
             if let Some(v) = power.gpu_watts {
                 push(
                     &mut parts,
-                    Span::styled(format!("GPU {}", watts(v)), Style::default().fg(theme.accent)),
+                    Span::styled(
+                        format!("GPU {}", watts(v)),
+                        Style::default().fg(theme.accent),
+                    ),
                 );
             }
             if let Some(v) = power.ane_watts {
                 push(
                     &mut parts,
-                    Span::styled(format!("ANE {}", watts(v)), Style::default().fg(theme.muted)),
+                    Span::styled(
+                        format!("ANE {}", watts(v)),
+                        Style::default().fg(theme.muted),
+                    ),
                 );
             }
             if let Some(v) = power.ram_watts {
@@ -188,9 +194,7 @@ impl Widget for PowerPanel<'_> {
             if !totals.is_empty() {
                 lines.push(Line::from(Span::styled(
                     totals.join("  ·  "),
-                    Style::default()
-                        .fg(theme.fg)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
                 )));
             }
         }

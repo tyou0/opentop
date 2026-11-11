@@ -50,15 +50,11 @@ pub use battery::{BatteryWidget, BatteryWidgetConfig};
 pub use common::{mini_bar, mix, pad_truncate, panel, spark_data, truncate, unavailable};
 pub use connections::{ConnectionsSummaryConfig, ConnectionsSummaryWidget};
 pub use cpu::{CpuCoreBars, CpuFreqTiers, CpuGraph, CpuGraphConfig};
-pub use disks::{
-    DiskHealthCard, DiskHealthCardConfig, DiskUsageList, DiskUsageListConfig,
-};
+pub use disks::{DiskHealthCard, DiskHealthCardConfig, DiskUsageList, DiskUsageListConfig};
 pub use footer::{FooterKeybinds, Keybind};
 pub use header::HeaderBar;
 pub use memory::{MemGauge, MemSparkline, SwapBar};
 pub use network::{NetSparklines, NetSparklinesConfig, NetTable, NetTableConfig};
 pub use processes::{ProcessSort, ProcessTable, ProcessTableConfig, ProcessTableState};
-pub use sensors::{
-    PowerPanel, PowerPanelConfig, SensorsPanel, SensorsPanelConfig,
-};
+pub use sensors::{PowerPanel, PowerPanelConfig, SensorsPanel, SensorsPanelConfig};
 pub use traits::{DashboardContext, DashboardStatefulWidget, DashboardWidget};

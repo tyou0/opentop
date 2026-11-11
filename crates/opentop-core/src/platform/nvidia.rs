@@ -3,11 +3,12 @@
 //! backend's result and never overwrites richer platform data (macmon).
 
 use std::process::Command;
+use std::time::Duration;
 
 use crate::snapshot::{GpuReading, PowerReading, SensorsInfo, TempReading};
+use crate::subprocess::run_bounded;
 
-const QUERY: &str =
-    "name,utilization.gpu,clocks.current.graphics,power.draw,temperature.gpu,memory.used,memory.total";
+const QUERY: &str = "name,utilization.gpu,clocks.current.graphics,power.draw,temperature.gpu,memory.used,memory.total";
 
 #[derive(Debug, Clone, Default)]
 struct NvidiaData {
@@ -29,10 +30,9 @@ impl NvidiaSampler {
     }
 
     fn query() -> Option<NvidiaData> {
-        let output = Command::new("nvidia-smi")
-            .args(["--query-gpu", QUERY, "--format", "csv,noheader,nounits"])
-            .output()
-            .ok()?;
+        let mut command = Command::new("nvidia-smi");
+        command.args(["--query-gpu", QUERY, "--format", "csv,noheader,nounits"]);
+        let output = run_bounded(&mut command, Duration::from_secs(2), None).ok()?;
         if !output.status.success() {
             return None;
         }
@@ -92,7 +92,10 @@ fn parse_csv_line(line: &str) -> NvidiaData {
     let parts: Vec<&str> = line.split(',').map(str::trim).collect();
     let num = |i: usize| -> Option<f64> { parts.get(i).and_then(|v| v.parse().ok()) };
     NvidiaData {
-        name: parts.first().map(|s| s.to_string()).filter(|s| !s.is_empty()),
+        name: parts
+            .first()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
         utilization_percent: num(1).map(|v| v as f32),
         frequency_mhz: num(2).map(|v| v as u32),
         power_watts: num(3).map(|v| v as f32),

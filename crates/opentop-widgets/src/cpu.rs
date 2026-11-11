@@ -3,10 +3,10 @@ use opentop_core::snapshot::Snapshot;
 use opentop_theme::Theme;
 use ratatui::prelude::*;
 use ratatui::symbols::Marker;
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 
-use crate::common::{mix, mini_bar, panel};
+use crate::common::{mini_bar, mix, panel};
 
 /// Braille line graph of total CPU usage over time, with a translucent fill.
 pub struct CpuGraph<'a> {
@@ -43,10 +43,7 @@ impl Widget for CpuGraph<'_> {
         }
         let theme = self.theme;
         let usage = self.snapshot.cpu.usage_percent;
-        let block = panel(
-            theme,
-            format!("{} {:.0}%", self.config.title, usage),
-        );
+        let block = panel(theme, format!("{} {:.0}%", self.config.title, usage));
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.is_empty() {
@@ -191,8 +188,7 @@ impl Widget for CpuFreqTiers<'_> {
                     ),
                     Span::styled(
                         format!("  {:>3.0}% active", tier.active_ratio * 100.0),
-                        Style::default()
-                            .fg(theme.usage_color(tier.active_ratio * 100.0)),
+                        Style::default().fg(theme.usage_color(tier.active_ratio * 100.0)),
                     ),
                 ])
             })

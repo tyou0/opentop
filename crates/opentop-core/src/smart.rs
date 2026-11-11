@@ -12,17 +12,18 @@
 //! result and never holds the shared lock while smartctl runs.
 
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::collectors::{sleep_until, Collector, CollectorUpdate};
+use super::collectors::{Collector, CollectorUpdate, sleep_until};
 use crate::snapshot::{Availability, DiskHealth};
+use crate::subprocess::{RunError, run_bounded};
 use crate::units;
 
 /// How long a failed device scan is remembered before retrying (the user may
@@ -87,7 +88,11 @@ impl Drop for SmartCollector {
 
 /// Runs smartctl periodically and reports the latest result. Exits when the
 /// receiver is dropped or `stop` is set.
-fn smart_worker(interval: Duration, tx: Sender<Availability<Vec<DiskHealth>>>, stop: Arc<AtomicBool>) {
+fn smart_worker(
+    interval: Duration,
+    tx: Sender<Availability<Vec<DiskHealth>>>,
+    stop: Arc<AtomicBool>,
+) {
     let mut devices: Vec<SmartDevice> = Vec::new();
     let mut last_scan: Option<Instant> = None;
     let mut scan_error: Option<String> = None;
@@ -113,7 +118,7 @@ fn smart_worker(interval: Duration, tx: Sender<Availability<Vec<DiskHealth>>>, s
         };
         if should_rescan {
             last_scan = Some(Instant::now());
-            match scan_devices() {
+            match scan_devices(&stop) {
                 Ok(found) => {
                     scan_error = if found.is_empty() {
                         Some("no SMART-capable devices found".into())
@@ -136,7 +141,12 @@ fn smart_worker(interval: Duration, tx: Sender<Availability<Vec<DiskHealth>>>, s
                     .unwrap_or_else(|| "no SMART devices available".into()),
             )
         } else {
-            Availability::available(devices.iter().map(query_device).collect())
+            Availability::available(
+                devices
+                    .iter()
+                    .map(|device| query_device(device, &stop))
+                    .collect(),
+            )
         };
 
         if tx.send(result).is_err() {
@@ -147,29 +157,18 @@ fn smart_worker(interval: Duration, tx: Sender<Availability<Vec<DiskHealth>>>, s
 }
 
 /// Discover SMART-capable devices. The error string is user-facing.
-fn scan_devices() -> Result<Vec<SmartDevice>, String> {
+fn scan_devices(stop: &AtomicBool) -> Result<Vec<SmartDevice>, String> {
     // --scan-open tries to open devices, which is what we need; fall back
     // to plain --scan on older builds.
-    let output = match Command::new("smartctl")
-        .args(["--scan-open", "--json"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) => {
-            return Err(if err.kind() == std::io::ErrorKind::NotFound {
-                "smartctl not found (install smartmontools)".into()
-            } else {
-                format!("smartctl failed to run: {err}")
-            });
-        }
-    };
+    let mut command = Command::new("smartctl");
+    command.args(["--scan-open", "--json"]);
+    let output = bounded_smartctl(&mut command, stop)?;
 
-    let parsed = serde_json::from_slice::<ScanOutput>(&output.stdout).or_else(|_| {
-        let fallback = Command::new("smartctl")
-            .args(["--scan", "--json"])
-            .output()
-            .map_err(|_| ())?;
-        serde_json::from_slice::<ScanOutput>(&fallback.stdout).map_err(|_| ())
+    let parsed = serde_json::from_slice::<ScanOutput>(&output).or_else(|_| {
+        let mut fallback = Command::new("smartctl");
+        fallback.args(["--scan", "--json"]);
+        let output = bounded_smartctl(&mut fallback, stop).map_err(|_| ())?;
+        serde_json::from_slice::<ScanOutput>(&output).map_err(|_| ())
     });
 
     match parsed {
@@ -185,13 +184,13 @@ fn scan_devices() -> Result<Vec<SmartDevice>, String> {
     }
 }
 
-fn query_device(device: &SmartDevice) -> DiskHealth {
-    let result = Command::new("smartctl")
+fn query_device(device: &SmartDevice, stop: &AtomicBool) -> DiskHealth {
+    let mut command = Command::new("smartctl");
+    command
         .args(["-n", "standby", "-a", "--json"])
-        .arg(&device.name)
-        .output();
+        .arg(&device.name);
 
-    match result {
+    match run_bounded(&mut command, Duration::from_secs(5), Some(stop)) {
         Ok(output) => {
             // smartctl uses non-zero exit codes for partial success; the
             // JSON is still valid, so only parse failures matter.
@@ -203,7 +202,17 @@ fn query_device(device: &SmartDevice) -> DiskHealth {
                     }
                     if health.note.is_none() {
                         if let Some(protocol) = &device.protocol {
-                            if protocol == "NVMe" && health.overall_health.as_ref().map(|_| health.overall_health.as_deref() == Some("PASSED")).or_else(|| json.pointer("/smart_status/passed").and_then(|v| v.as_bool())).is_none() {
+                            if protocol == "NVMe"
+                                && health
+                                    .overall_health
+                                    .as_ref()
+                                    .map(|_| health.overall_health.as_deref() == Some("PASSED"))
+                                    .or_else(|| {
+                                        json.pointer("/smart_status/passed")
+                                            .and_then(|v| v.as_bool())
+                                    })
+                                    .is_none()
+                            {
                                 health.note = Some("device did not report SMART status".into());
                             }
                         }
@@ -224,9 +233,30 @@ fn query_device(device: &SmartDevice) -> DiskHealth {
         Err(err) => DiskHealth {
             device: device.name.clone(),
             interface: device.protocol.clone(),
-            note: Some(format!("failed to run smartctl: {err}")),
+            note: Some(format!("smartctl {}", run_error_label(&err))),
             ..DiskHealth::default()
         },
+    }
+}
+
+fn bounded_smartctl(command: &mut Command, stop: &AtomicBool) -> Result<Vec<u8>, String> {
+    run_bounded(command, Duration::from_secs(5), Some(stop))
+        .map(|output| output.stdout)
+        .map_err(|error| match &error {
+            RunError::Spawn(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+                "smartctl not found (install smartmontools)".into()
+            }
+            _ => format!("smartctl {}", run_error_label(&error)),
+        })
+}
+
+fn run_error_label(error: &RunError) -> &'static str {
+    match error {
+        RunError::Spawn(_) => "failed to start",
+        RunError::Timeout => "timed out",
+        RunError::Cancelled => "cancelled",
+        RunError::OutputLimit => "output exceeded the limit",
+        RunError::Wait(_) => "failed while waiting",
     }
 }
 
@@ -290,7 +320,13 @@ pub fn parse_smart_json(json: &Value, device: &str) -> DiskHealth {
         overall_health: json
             .pointer("/smart_status/passed")
             .and_then(Value::as_bool)
-            .map(|p| if p { "PASSED".to_string() } else { "FAILED".to_string() }),
+            .map(|p| {
+                if p {
+                    "PASSED".to_string()
+                } else {
+                    "FAILED".to_string()
+                }
+            }),
         temperature_celsius: u64_at("/temperature/current")
             .or_else(|| u64_at(&nvme("temperature")))
             .map(|t| t as f64),
@@ -323,9 +359,9 @@ fn ata_attribute_raw(json: &Value, id: u64) -> Option<u64> {
     json.pointer("/ata_smart_attributes/table")
         .and_then(Value::as_array)
         .and_then(|table| {
-            table.iter().find(|attr| {
-                attr.pointer("/id").and_then(Value::as_u64) == Some(id)
-            })
+            table
+                .iter()
+                .find(|attr| attr.pointer("/id").and_then(Value::as_u64) == Some(id))
         })
         .and_then(|attr| attr.pointer("/raw/value"))
         .and_then(|v| {
@@ -425,7 +461,16 @@ mod tests {
     fn parses_ata_json_with_note_and_attributes() {
         let json: Value = serde_json::from_str(ATA_SAMPLE).unwrap();
         let health = parse_smart_json(&json, "/dev/sda");
-        assert_eq!(health.overall_health.as_ref().map(|_| health.overall_health.as_deref() == Some("PASSED")).or_else(|| json.pointer("/smart_status/passed").and_then(|v| v.as_bool())), Some(false));
+        assert_eq!(
+            health
+                .overall_health
+                .as_ref()
+                .map(|_| health.overall_health.as_deref() == Some("PASSED"))
+                .or_else(|| json
+                    .pointer("/smart_status/passed")
+                    .and_then(|v| v.as_bool())),
+            Some(false)
+        );
         assert_eq!(health.temperature_celsius, Some(31.0));
         assert_eq!(health.reallocated_sectors, Some(12));
         assert_eq!(health.note.as_deref(), Some("SMART error logged"));

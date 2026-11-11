@@ -86,6 +86,8 @@ pub fn run(
         if app.should_exit() {
             break;
         }
+        app.poll_plugins();
+        app.poll_process_action();
 
         let now = Instant::now();
         let next_data = last_data_fetch + options.data_interval;
@@ -101,14 +103,13 @@ pub fn run(
             let mut drained = 0;
             while drained < 64 {
                 match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    Event::Key(key)
+                        if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                    {
                         let started = Instant::now();
                         let should_exit = app.handle_key(key);
                         if let Some(perf) = &options.perf {
-                            perf.record(
-                                "key",
-                                &[("handler_us", duration_us(started.elapsed()))],
-                            );
+                            perf.record("key", &[("handler_us", duration_us(started.elapsed()))]);
                         }
                         if should_exit {
                             break;
@@ -155,8 +156,7 @@ pub fn run(
         let now = Instant::now();
         let input_ready = app.needs_render()
             && (force_draw || now.duration_since(last_draw) >= options.input_frame_interval);
-        let data_ready = data_dirty
-            && now.duration_since(last_draw) >= options.data_interval;
+        let data_ready = data_dirty && now.duration_since(last_draw) >= options.data_interval;
         if initial_draw || input_ready || data_ready {
             let theme = app.theme().clone();
             let started = Instant::now();

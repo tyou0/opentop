@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use sysinfo::System;
 
-use super::{percent, Collector, CollectorUpdate};
+use super::{Collector, CollectorUpdate, percent};
 use crate::snapshot::{CoreInfo, CpuInfo, MemoryInfo};
 
 /// CPU usage (global + per core) and memory/swap, using sysinfo.

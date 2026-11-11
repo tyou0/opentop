@@ -63,7 +63,10 @@ fn slow_collector_does_not_block_fast_collector_or_readers() {
 
     let deadline = Instant::now() + Duration::from_secs(2);
     while monitor.snapshot().system.hostname.as_deref() != Some("gated-released") {
-        assert!(Instant::now() < deadline, "gated update was never published");
+        assert!(
+            Instant::now() < deadline,
+            "gated update was never published"
+        );
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -117,8 +120,10 @@ impl Collector for GatedCollector {
     fn sample(&mut self, _interval: Duration) -> Option<CollectorUpdate> {
         if !self.seeded {
             self.seeded = true;
-            let mut info = SystemInfo::default();
-            info.hostname = Some("gated-seed".into());
+            let info = SystemInfo {
+                hostname: Some("gated-seed".into()),
+                ..SystemInfo::default()
+            };
             return Some(CollectorUpdate::System(info));
         }
 
@@ -138,8 +143,10 @@ impl Collector for GatedCollector {
             released = guard;
         }
 
-        let mut info = SystemInfo::default();
-        info.hostname = Some("gated-released".into());
+        let info = SystemInfo {
+            hostname: Some("gated-released".into()),
+            ..SystemInfo::default()
+        };
         Some(CollectorUpdate::System(info))
     }
 }

@@ -1,8 +1,10 @@
 //! Fan speeds via `sensors -j` (lm-sensors). Linux only.
 
 use std::process::Command;
+use std::time::Duration;
 
 use crate::snapshot::FanReading;
+use crate::subprocess::run_bounded;
 
 /// Thin wrapper around the `sensors` binary.
 pub struct LmSensors;
@@ -10,14 +12,18 @@ pub struct LmSensors;
 impl LmSensors {
     /// `None` when lm-sensors is not installed.
     pub fn probe() -> Option<Self> {
-        let output = Command::new("sensors").arg("-j").output().ok()?;
+        let mut command = Command::new("sensors");
+        command.arg("-j");
+        let output = run_bounded(&mut command, Duration::from_secs(2), None).ok()?;
         output.status.success().then_some(Self)
     }
 
     /// Parse fan RPMs out of `sensors -j` output. The JSON nests chips ->
     /// features -> readings, e.g. `{"nct6798": {"fan1": {"fan1_input": 1200.0}}}`.
     pub fn fans(&self) -> Vec<FanReading> {
-        let Ok(output) = Command::new("sensors").arg("-j").output() else {
+        let mut command = Command::new("sensors");
+        command.arg("-j");
+        let Ok(output) = run_bounded(&mut command, Duration::from_secs(2), None) else {
             return Vec::new();
         };
         if !output.status.success() {
