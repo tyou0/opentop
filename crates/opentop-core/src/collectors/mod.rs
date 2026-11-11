@@ -123,9 +123,8 @@ pub(crate) fn percent(used: u64, total: u64) -> f32 {
     }
 }
 
-/// Sleep until `deadline`, waking early (within ~100ms) when `stop` is set.
+/// Sleep until `deadline` or until the stopping thread unparks this thread.
 pub(crate) fn sleep_until(deadline: Instant, stop: &AtomicBool) {
-    const GRANULARITY: Duration = Duration::from_millis(100);
     loop {
         if stop.load(Ordering::Relaxed) {
             return;
@@ -134,6 +133,6 @@ pub(crate) fn sleep_until(deadline: Instant, stop: &AtomicBool) {
         if now >= deadline {
             return;
         }
-        std::thread::sleep((deadline - now).min(GRANULARITY));
+        std::thread::park_timeout(deadline - now);
     }
 }

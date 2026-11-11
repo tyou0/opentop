@@ -39,7 +39,7 @@ fn main() -> ExitCode {
 
 fn dump(args: DumpArgs) -> ExitCode {
     let config = MonitorConfig {
-        top_processes: args.top.max(50),
+        top_processes: args.top.max(1),
         ..MonitorConfig::default()
     };
     let monitor = MonitorHandle::start(config);

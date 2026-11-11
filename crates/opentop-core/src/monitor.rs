@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::collectors::Collector;
 use crate::collectors::battery::BatteryCollector;
 use crate::collectors::cpu_memory::CpuMemoryCollector;
 use crate::collectors::disks::DiskCollector;
@@ -14,6 +13,7 @@ use crate::collectors::network::NetworkCollector;
 use crate::collectors::processes::ProcessesCollector;
 use crate::collectors::sensors::SensorsCollector;
 use crate::collectors::system_info::SystemInfoCollector;
+use crate::collectors::{Collector, sleep_until};
 use crate::history::History;
 use crate::now_ms;
 use crate::smart::SmartCollector;
@@ -323,6 +323,9 @@ impl Drop for MonitorHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         let threads = std::mem::take(&mut *lock(&self.threads));
+        for thread in &threads {
+            thread.thread().unpark();
+        }
         for thread in threads {
             let _ = thread.join();
         }
@@ -387,20 +390,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn sleep_until(deadline: Instant, stop: &AtomicBool) {
-    const GRANULARITY: Duration = Duration::from_millis(100);
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            return;
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return;
-        }
-        thread::sleep((deadline - now).min(GRANULARITY));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +416,35 @@ mod tests {
         let started = Instant::now();
         assert!(monitor.try_frame_since(0).is_none());
         assert!(started.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn stopping_a_sleeping_collector_does_not_wait_for_its_interval() {
+        use std::sync::mpsc;
+
+        struct ReadyCollector(mpsc::Sender<()>);
+        impl Collector for ReadyCollector {
+            fn sample(&mut self, _: Duration) -> Option<crate::collectors::CollectorUpdate> {
+                let _ = self.0.send(());
+                None
+            }
+        }
+
+        let (sampled_tx, sampled_rx) = mpsc::channel();
+        let monitor = MonitorHandle::start_with_collectors(
+            MonitorConfig::default(),
+            vec![CollectorSpec::new(
+                "test",
+                Duration::from_secs(60),
+                move || ReadyCollector(sampled_tx),
+            )],
+        );
+        sampled_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (stopped_tx, stopped_rx) = mpsc::channel();
+        thread::spawn(move || {
+            drop(monitor);
+            stopped_tx.send(()).unwrap();
+        });
+        stopped_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 }

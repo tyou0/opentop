@@ -25,11 +25,10 @@ Install from a source checkout with a stable Rust toolchain and a C compiler/lin
 On Windows, the Rust MSVC toolchain also requires the Visual Studio C++ build
 tools. See [rustup](https://rustup.rs/) for platform-specific setup.
 
-First, obtain a checkout of this repository. Replace `REPOSITORY_URL` with an
-accessible Git URL:
+First, obtain a checkout of this repository:
 
 ```bash
-git clone REPOSITORY_URL opentop
+git clone https://github.com/tyou0/opentop.git
 cd opentop
 ```
 
@@ -109,6 +108,9 @@ Launch the interactive dashboard:
 ```bash
 opentop
 ```
+
+The process table includes every accessible process. On a wide panel it also
+shows command lines; zoom the panel with `f` or `z` to give it more room.
 
 Use `--config <path>` to override the config file. Repeated
 `--plugin-dir <path>` flags add plugin roots. See [docs/PLUGINS.md](docs/PLUGINS.md)
@@ -247,7 +249,11 @@ JSON output:
 ```bash
 opentop-cli dump --json
 opentop-cli dump --json --pretty
+opentop-cli dump --json --top 25
 ```
+
+JSON snapshots include process command-line arguments, which can contain
+sensitive information. Review snapshots before sharing them.
 
 Watch mode (stream every N seconds):
 

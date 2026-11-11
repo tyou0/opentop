@@ -261,6 +261,7 @@ fn render_panel(
                     theme,
                     config: ProcessTableConfig {
                         sort: process_sort,
+                        show_command: area.width >= 80,
                         ..Default::default()
                     },
                 },

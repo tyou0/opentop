@@ -46,6 +46,7 @@ impl Drop for ConnectionsCollector {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
             let _ = worker.join();
         }
     }

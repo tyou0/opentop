@@ -1,5 +1,23 @@
 # Opentop performance baseline and follow-up
 
+## Local resource spot check, 2026-11-11
+
+On macOS arm64, a 160x48 PTY ran the release build with the default dashboard
+and approximately 1,000 system processes. CPU time and peak resident memory
+were sampled with `ps` from about 2 to 13 seconds after launch. These figures
+cover the main process, not external helper processes. Each is one short run;
+system load and the different features collected by the programs affect them.
+
+| Program | CPU, percent of one core | Peak resident memory |
+| --- | ---: | ---: |
+| OpenTop before the collector changes | 5.46% | 25.31 MiB |
+| OpenTop after the collector changes | 3.58% | 23.47 MiB |
+| htop 3.5.3 | 0.34% | 9.84 MiB |
+
+OpenTop still uses more resources than htop on this machine. It also collects
+additional sensor, disk-health and socket information. The revised dashboard
+includes all accessible processes rather than only the top 50 by CPU.
+
 Measured 2026-10-20 on the local development machine. This report preserves the
 pre-fix Task 01 failure baseline and records local follow-up acceptance after
 the sampling, cached-frame, scheduler, process, and plugin changes.

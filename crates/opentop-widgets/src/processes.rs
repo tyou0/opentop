@@ -50,12 +50,7 @@ impl ProcessSort {
                     .then_with(|| a.pid.cmp(&b.pid))
             }),
             ProcessSort::Pid => list.sort_by_key(|p| p.pid),
-            ProcessSort::Name => list.sort_by(|a, b| {
-                a.name
-                    .to_lowercase()
-                    .cmp(&b.name.to_lowercase())
-                    .then_with(|| a.pid.cmp(&b.pid))
-            }),
+            ProcessSort::Name => list.sort_by_cached_key(|p| (p.name.to_lowercase(), p.pid)),
         }
         list
     }

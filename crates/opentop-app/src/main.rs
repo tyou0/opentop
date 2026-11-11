@@ -22,7 +22,10 @@ fn main() -> io::Result<()> {
     let mut app = App::load(config_path);
     app.cli_plugin_dirs = plugin_dirs;
     app.rescan_plugins();
-    let monitor = MonitorHandle::start(MonitorConfig::default());
+    let monitor = MonitorHandle::start(MonitorConfig {
+        top_processes: usize::MAX,
+        ..MonitorConfig::default()
+    });
 
     let result = runtime::run(
         session.terminal_mut(),

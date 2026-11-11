@@ -17,6 +17,35 @@ fn test_process_sort_cycle() {
 }
 
 #[test]
+fn process_name_sort_is_case_insensitive_and_breaks_ties_by_pid() {
+    let processes = vec![
+        ProcessInfo {
+            pid: 3,
+            name: "zebra".into(),
+            ..Default::default()
+        },
+        ProcessInfo {
+            pid: 2,
+            name: "Alpha".into(),
+            ..Default::default()
+        },
+        ProcessInfo {
+            pid: 1,
+            name: "alpha".into(),
+            ..Default::default()
+        },
+    ];
+    assert_eq!(
+        ProcessSort::Name
+            .sorted(&processes)
+            .iter()
+            .map(|process| process.pid)
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+}
+
+#[test]
 fn process_sort_uses_pid_ties_and_selection_highlights_the_rendered_row() {
     let processes = vec![
         ProcessInfo {

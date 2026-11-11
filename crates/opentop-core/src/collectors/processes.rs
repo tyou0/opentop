@@ -1,6 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use sysinfo::{ProcessStatus, ProcessesToUpdate, System, Users};
+use sysinfo::{
+    Process, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind, Users,
+};
 
 use super::{Collector, CollectorUpdate};
 use crate::snapshot::ProcessInfo;
@@ -10,6 +12,7 @@ use crate::snapshot::ProcessInfo;
 pub struct ProcessesCollector {
     sys: System,
     users: Users,
+    users_refreshed_at: Instant,
     top_n: usize,
     primed: bool,
 }
@@ -19,6 +22,7 @@ impl ProcessesCollector {
         Self {
             sys: System::new(),
             users: Users::new_with_refreshed_list(),
+            users_refreshed_at: Instant::now(),
             top_n: top_n.max(1),
             primed: false,
         }
@@ -27,25 +31,34 @@ impl ProcessesCollector {
 
 impl Collector for ProcessesCollector {
     fn sample(&mut self, _interval: Duration) -> Option<CollectorUpdate> {
-        self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        let refresh = ProcessRefreshKind::nothing()
+            .with_cpu()
+            .with_memory()
+            .with_user(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always);
+        self.sys
+            .refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
         if !self.primed {
             self.primed = true;
             std::thread::sleep(Duration::from_millis(300));
-            self.sys.refresh_processes(ProcessesToUpdate::All, true);
+            self.sys
+                .refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
         }
-        self.users.refresh();
+        // shortcut: account-name changes can lag 60 seconds; refresh sooner if needed.
+        if self.users_refreshed_at.elapsed() >= Duration::from_secs(60) {
+            self.users.refresh();
+            self.users_refreshed_at = Instant::now();
+        }
 
-        let user_map: Vec<(String, String)> = self
-            .users
-            .list()
-            .iter()
-            .map(|u| (u.id().to_string(), u.name().to_string()))
-            .collect();
+        let mut candidates: Vec<&Process> = self.sys.processes().values().collect();
+        if candidates.len() > self.top_n {
+            candidates.select_nth_unstable_by(self.top_n, |a, b| process_order(a, b));
+            candidates.truncate(self.top_n);
+        }
+        candidates.sort_unstable_by(|a, b| process_order(a, b));
 
-        let mut processes: Vec<ProcessInfo> = self
-            .sys
-            .processes()
-            .values()
+        let processes: Vec<ProcessInfo> = candidates
+            .into_iter()
             .map(|p| ProcessInfo {
                 pid: p.pid().as_u32(),
                 parent_pid: p.parent().map(|pid| pid.as_u32()),
@@ -56,13 +69,10 @@ impl Collector for ProcessesCollector {
                     .map(|arg| arg.to_string_lossy())
                     .collect::<Vec<_>>()
                     .join(" "),
-                user: p.user_id().and_then(|uid| {
-                    let uid = uid.to_string();
-                    user_map
-                        .iter()
-                        .find(|(id, _)| *id == uid)
-                        .map(|(_, name)| name.clone())
-                }),
+                user: p
+                    .user_id()
+                    .and_then(|uid| self.users.get_user_by_id(uid))
+                    .map(|user| user.name().to_string()),
                 cpu_percent: p.cpu_usage(),
                 memory_bytes: p.memory(),
                 virtual_memory_bytes: p.virtual_memory(),
@@ -73,15 +83,15 @@ impl Collector for ProcessesCollector {
             })
             .collect();
 
-        processes.sort_by(|a, b| {
-            b.cpu_percent
-                .partial_cmp(&a.cpu_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.pid.cmp(&b.pid))
-        });
-        processes.truncate(self.top_n);
         Some(CollectorUpdate::Processes(processes))
     }
+}
+
+fn process_order(a: &Process, b: &Process) -> std::cmp::Ordering {
+    b.cpu_usage()
+        .partial_cmp(&a.cpu_usage())
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.pid().cmp(&b.pid()))
 }
 
 fn status_str(status: ProcessStatus) -> String {
@@ -102,4 +112,23 @@ fn status_str(status: ProcessStatus) -> String {
         _ => "unknown",
     }
     .to_string()
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unlimited_collection_includes_own_process_and_command() {
+        let mut collector = ProcessesCollector::new(usize::MAX);
+        let Some(CollectorUpdate::Processes(processes)) = collector.sample(Duration::from_secs(2))
+        else {
+            panic!("expected process data");
+        };
+        let current = processes
+            .iter()
+            .find(|process| process.pid == std::process::id())
+            .expect("current process should be visible");
+        assert!(!current.cmd.is_empty());
+    }
 }
