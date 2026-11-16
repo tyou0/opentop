@@ -70,8 +70,14 @@ impl SensorsBackend for MacmonBackend {
             system_watts: (metrics.sys_power > 0.0).then_some(metrics.sys_power),
         });
 
+        let soc = self.sampler.get_soc_info();
         let gpu = Some(GpuReading {
-            name: Some("Apple GPU".into()),
+            name: Some(if soc.chip_name.is_empty() {
+                "Apple GPU".into()
+            } else {
+                format!("{} GPU", soc.chip_name)
+            }),
+            cores: (soc.gpu_cores > 0).then_some(u32::from(soc.gpu_cores)),
             usage_percent: Some(metrics.gpu_active_ratio * 100.0),
             scaled_percent: Some(metrics.gpu_scaled_ratio * 100.0),
             frequency_mhz: (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz),

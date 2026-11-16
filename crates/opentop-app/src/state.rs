@@ -23,6 +23,7 @@ use crate::widgets::{WidgetCatalog, WidgetId};
 pub enum Overlay {
     None,
     Help,
+    Hardware,
     Widgets,
     ConfirmTerminate,
 }
@@ -43,6 +44,8 @@ pub struct App {
     pub exit: bool,
     pub focused: Option<WidgetId>,
     pub overlay: Overlay,
+    pub hardware_tab: usize,
+    pub hardware_scroll: u16,
     pub picker: Option<WidgetPicker>,
     pub panel_layout: PanelLayout,
     pub layout_scroll_row: usize,
@@ -106,6 +109,8 @@ impl App {
             exit: false,
             focused,
             overlay: Overlay::None,
+            hardware_tab: 0,
+            hardware_scroll: 0,
             picker: None,
             panel_layout: PanelLayout::default(),
             layout_scroll_row: 0,
@@ -392,6 +397,13 @@ impl App {
 
     pub fn open_help(&mut self) {
         self.overlay = Overlay::Help;
+        self.dirty = true;
+    }
+
+    pub fn open_hardware(&mut self) {
+        self.hardware_tab = 0;
+        self.hardware_scroll = 0;
+        self.overlay = Overlay::Hardware;
         self.dirty = true;
     }
 

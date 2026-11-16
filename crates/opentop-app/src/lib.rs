@@ -1,5 +1,6 @@
 pub mod config;
 pub mod dashboard;
+mod hardware_info;
 pub mod input;
 pub mod layout;
 pub mod runtime;

@@ -151,6 +151,7 @@ for discovery, limits, and the opt-in example plugin.
 - `Shift` + arrows - Move the focused widget; `Alt` + arrows resize it
 - `0` - Reset column count and pane sizes; `f` / `z` zooms the focused widget
 - `t` - Toggle dark/light theme
+- `i` - Show hardware information; use left/right arrows to change tabs and Esc to close
 - `w` - Open Widgets; Space toggles, `+`/`-` reorders, Enter applies, Esc cancels
 - `?` - Show help; Esc closes the top overlay
 - `q` / `Esc` - Quit when no overlay is open; Ctrl-C also quits
@@ -171,6 +172,11 @@ for discovery, limits, and the opt-in example plugin.
 
 **Help overlay (when opened with `?`):**
 - `Esc`, `q`, or `?` - Close help
+
+**Hardware information (when opened with `i`):**
+- `←` / `→` - Switch CPU, Memory, GPU, Storage, and System tabs
+- `↑` / `↓` - Scroll longer details
+- `Esc` / `q` - Close the popup
 
 ## Configuration file
 

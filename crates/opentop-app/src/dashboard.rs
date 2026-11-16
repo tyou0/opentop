@@ -105,6 +105,8 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         pending_process,
         process_action_status,
         overlay,
+        hardware_tab,
+        hardware_scroll,
         picker,
         ..
     } = app;
@@ -134,6 +136,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let mut binds = vec![
         Keybind::new("q", "quit"),
         Keybind::new("Tab", "focus"),
+        Keybind::new("i", "info"),
         Keybind::new("[]", "columns"),
     ];
     if focused
@@ -171,6 +174,14 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     match *overlay {
         Overlay::None => {}
         Overlay::Help => render_help(frame, area, theme),
+        Overlay::Hardware => crate::hardware_info::render(
+            frame,
+            centered(area, area.width.min(82), area.height.min(22)),
+            snapshot,
+            *hardware_tab,
+            hardware_scroll,
+            theme,
+        ),
         Overlay::ConfirmTerminate => {
             render_termination_confirmation(frame, area, pending_process.as_ref(), theme)
         }
@@ -375,7 +386,7 @@ fn render_missing(
 }
 
 fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let rect = centered(area, area.width.min(68), area.height.min(18));
+    let rect = centered(area, area.width.min(68), area.height.min(19));
     frame.render_widget(Clear, rect);
     let help = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -397,6 +408,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("0            Reset layout sizes and columns"),
         Line::from("f / z        Zoom focused widget"),
         Line::from("w            Open Widgets"),
+        Line::from("i            Show hardware information"),
         Line::from("t            Toggle theme"),
         Line::from("Esc          Close this help"),
     ])
@@ -561,9 +573,128 @@ mod tests {
     use super::*;
     use crate::widgets::{WidgetDescriptor, WidgetId};
     use opentop_core::plugins::{PluginResult, PluginStatus};
-    use opentop_core::snapshot::{NetworkInterface, ProcessInfo};
+    use opentop_core::snapshot::{
+        CoreInfo, DiskUsageInfo, GpuReading, NetworkInterface, ProcessInfo,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn hardware_popup_renders_live_details_and_theme_for_each_tab() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        for theme in [Theme::dark(), Theme::light()] {
+            let mut app = App::new();
+            app.frame.snapshot.cpu.brand = "Example CPU".into();
+            app.frame.snapshot.cpu.cores = vec![CoreInfo::default()];
+            app.frame.snapshot.memory.total_bytes = 8 * 1024 * 1024 * 1024;
+            app.frame.snapshot.memory.used_bytes = 2 * 1024 * 1024 * 1024;
+            app.frame.snapshot.sensors.gpu = Some(GpuReading {
+                name: Some("Example GPU".into()),
+                cores: Some(32),
+                usage_percent: Some(42.0),
+                ..Default::default()
+            });
+            app.frame.snapshot.disks = vec![DiskUsageInfo {
+                name: "Example disk".into(),
+                mount_point: "/example".into(),
+                ..Default::default()
+            }];
+            app.frame.snapshot.system.product = Some("Example system".into());
+            app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+
+            for expected in [
+                "Example CPU",
+                "2.0 GB",
+                "Example GPU",
+                "Example disk",
+                "Example system",
+            ] {
+                terminal
+                    .draw(|frame| draw(frame, &mut app, &theme))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+                assert!(text.contains(expected), "missing {expected}");
+                if expected == "Example GPU" {
+                    assert!(text.contains("Cores          32"));
+                }
+                let tab_row = centered(Rect::new(0, 0, 100, 30), 82, 22).y + 1;
+                assert!((0..100).any(|x| {
+                    buffer[(x, tab_row)].bg == theme.selection_bg
+                        && buffer[(x, tab_row)].fg == theme.selection_fg
+                }));
+                app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+            }
+
+            app.hardware_tab = 2;
+            app.frame.snapshot.sensors.gpu = None;
+            app.frame.snapshot.sensors.source.clear();
+            terminal
+                .draw(|frame| draw(frame, &mut app, &theme))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(text.contains("Waiting for sensor readings"));
+            app.frame.snapshot.sensors.source = "unavailable".into();
+            terminal
+                .draw(|frame| draw(frame, &mut app, &theme))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(text.contains("Unavailable on this system"));
+        }
+    }
+
+    #[test]
+    fn hardware_popup_scrolls_storage_and_handles_small_terminals() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+        app.open_hardware();
+        app.hardware_tab = 3;
+        app.frame.snapshot.disks = (0..8)
+            .map(|index| DiskUsageInfo {
+                name: format!("volume-{index}"),
+                ..Default::default()
+            })
+            .collect();
+        for _ in 0..100 {
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let theme = app.theme().clone();
+        terminal
+            .draw(|frame| draw(frame, &mut app, &theme))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("volume-7"));
+        assert!(app.hardware_scroll < 100);
+
+        for (width, height) in [(40, 12), (5, 2), (1, 1)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &mut app, &theme))
+                .unwrap();
+        }
+    }
 
     #[test]
     fn dashboard_theme_and_process_focus_match_across_panels() {

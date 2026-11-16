@@ -24,6 +24,31 @@ impl App {
             }
             return false;
         }
+        if self.overlay == Overlay::Hardware {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => self.cancel_overlay(),
+                KeyCode::Left | KeyCode::Right => {
+                    let count = crate::hardware_info::TABS.len();
+                    self.hardware_tab = if key.code == KeyCode::Left {
+                        (self.hardware_tab + count - 1) % count
+                    } else {
+                        (self.hardware_tab + 1) % count
+                    };
+                    self.hardware_scroll = 0;
+                    self.invalidate();
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    self.hardware_scroll = if key.code == KeyCode::Up {
+                        self.hardware_scroll.saturating_sub(1)
+                    } else {
+                        self.hardware_scroll.saturating_add(1)
+                    };
+                    self.invalidate();
+                }
+                _ => {}
+            }
+            return false;
+        }
         if self.overlay == Overlay::ConfirmTerminate {
             if key.kind == KeyEventKind::Press {
                 match key.code {
@@ -85,6 +110,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('?') => self.open_help(),
+            KeyCode::Char('i') => self.open_hardware(),
             KeyCode::Char('w') => self.open_widgets(),
             KeyCode::Char('t') => self.toggle_theme(),
             KeyCode::Char('f' | 'z') => self.toggle_fullscreen(),
@@ -214,6 +240,32 @@ mod tests {
         assert!(!app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert_eq!(app.overlay, Overlay::None);
         assert!(!app.should_exit());
+    }
+
+    #[test]
+    fn hardware_popup_navigation_does_not_move_focus_or_quit() {
+        let mut app = App::new();
+        let focus = app.focused.clone();
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(app.overlay, Overlay::Hardware);
+        assert_eq!(app.hardware_tab, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.hardware_tab, crate::hardware_info::TABS.len() - 1);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.hardware_tab, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.hardware_scroll, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.hardware_tab, 1);
+        assert_eq!(app.hardware_scroll, 0);
+        assert_eq!(app.focused, focus);
+
+        assert!(!app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.should_exit());
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(app.hardware_tab, 0);
     }
 
     #[test]

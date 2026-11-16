@@ -203,6 +203,8 @@ pub struct PowerReading {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GpuReading {
     pub name: Option<String>,
+    #[serde(default)]
+    pub cores: Option<u32>,
     pub usage_percent: Option<f32>,
     pub scaled_percent: Option<f32>,
     pub frequency_mhz: Option<u32>,
@@ -317,4 +319,16 @@ pub struct ConnectionsSummary {
     pub tcp_wait: usize,
     pub udp: usize,
     pub processes_with_sockets: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GpuReading;
+
+    #[test]
+    fn older_gpu_snapshots_without_core_count_still_deserialize() {
+        let gpu: GpuReading = serde_json::from_str(r#"{"name":"GPU"}"#).unwrap();
+        assert_eq!(gpu.name.as_deref(), Some("GPU"));
+        assert_eq!(gpu.cores, None);
+    }
 }

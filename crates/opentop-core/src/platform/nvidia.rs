@@ -63,6 +63,7 @@ impl NvidiaSampler {
         if gpu_missing {
             info.gpu = Some(GpuReading {
                 name: data.name.clone(),
+                cores: None,
                 usage_percent: data.utilization_percent,
                 scaled_percent: None,
                 frequency_mhz: data.frequency_mhz,

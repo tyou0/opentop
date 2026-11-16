@@ -7,12 +7,7 @@ trap 'rm -rf -- "$test_dir"' EXIT HUP INT TERM
 cd "$repo_dir"
 
 check_tui() {
-  smoke=$(python3 scripts/tui_perf.py --binary "$1" --scenario smoke --cols 200 --duration 0.1)
-  if ! printf '%s\n' "$smoke" | grep -Eq '^first_output_ms=[0-9]' ||
-     ! printf '%s\n' "$smoke" | grep -Eq '^quit_ms=[0-9]'; then
-    printf '%s\n' "$smoke" >&2
-    return 1
-  fi
+  python3 scripts/test-hardware-popup.py "$1"
 }
 
 npm pack --ignore-scripts --pack-destination "$test_dir" >/dev/null
