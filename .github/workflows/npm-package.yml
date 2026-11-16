@@ -51,8 +51,10 @@ jobs:
         run: |
           npm install -g --prefix "$RUNNER_TEMP/npm-git" "$PACKAGE_URL"
           "$RUNNER_TEMP/npm-git/bin/opentop-cli" --version
+          python3 scripts/test-hardware-popup.py "$RUNNER_TEMP/npm-git/bin/opentop"
           BUN_INSTALL="$RUNNER_TEMP/bun-git" bun install -g "$PACKAGE_URL"
           "$RUNNER_TEMP/bun-git/bin/opentop-cli" --version
+          python3 scripts/test-hardware-popup.py "$RUNNER_TEMP/bun-git/bin/opentop"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
