@@ -6,15 +6,22 @@ test_dir=$(mktemp -d)
 trap 'rm -rf -- "$test_dir"' EXIT HUP INT TERM
 cd "$repo_dir"
 
+check_tui() {
+  smoke=$(python3 scripts/tui_perf.py --binary "$1" --scenario smoke --cols 200 --duration 0.1)
+  if ! printf '%s\n' "$smoke" | grep -Eq '^first_output_ms=[0-9]' ||
+     ! printf '%s\n' "$smoke" | grep -Eq '^quit_ms=[0-9]'; then
+    printf '%s\n' "$smoke" >&2
+    return 1
+  fi
+}
+
 npm pack --ignore-scripts --pack-destination "$test_dir" >/dev/null
 archive=$test_dir/opentop-rs-$(node -p 'require("./package.json").version').tgz
 npm install -g --ignore-scripts --prefix "$test_dir/npm prefix" "$archive" >/dev/null
 npm_bin="$test_dir/npm prefix/bin"
 "$npm_bin/opentop-cli" --version | grep -q '^opentop-cli '
 "$npm_bin/opentop-cli" dump --json | python3 -c 'import json, sys; data = json.load(sys.stdin); assert all(key in data for key in ("cpu", "memory", "disks", "processes"))'
-smoke=$(python3 scripts/tui_perf.py --binary "$npm_bin/opentop" --scenario smoke --duration 0.1)
-printf '%s\n' "$smoke" | grep -Eq '^first_output_ms=[0-9]'
-printf '%s\n' "$smoke" | grep -Eq '^quit_ms=[0-9]'
+check_tui "$npm_bin/opentop"
 
 if command -v bun >/dev/null 2>&1; then
   bun_path=$(command -v bun)
@@ -30,9 +37,7 @@ if command -v bun >/dev/null 2>&1; then
     exit 1
   fi
   grep -q 'unknown argument' "$test_dir/error"
-  smoke=$(python3 scripts/tui_perf.py --binary "$bun_bin/opentop" --scenario smoke --duration 0.1)
-  printf '%s\n' "$smoke" | grep -Eq '^first_output_ms=[0-9]'
-  printf '%s\n' "$smoke" | grep -Eq '^quit_ms=[0-9]'
+  check_tui "$bun_bin/opentop"
 fi
 
 mkdir -p "$test_dir/unsupported"
