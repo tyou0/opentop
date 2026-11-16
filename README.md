@@ -23,12 +23,13 @@ A modern, cross-platform terminal system monitor built in Rust. opentop provides
 
 ### npm and Bun
 
-Install prebuilt binaries globally; no Rust toolchain or source checkout is needed:
+Install the prebuilt binaries directly from GitHub; no Rust toolchain, registry
+account, or manual source checkout is needed. Git must be installed:
 
 ```bash
-npm install -g opentop-rs
+npm install -g git+https://github.com/tyou0/opentop.git
 # or
-bun install -g opentop-rs
+bun install -g git+https://github.com/tyou0/opentop.git
 ```
 
 Run `opentop` for the dashboard or `opentop-cli` for snapshots. The package
@@ -36,13 +37,11 @@ supports Apple Silicon and Intel macOS, and x64 and ARM64 Linux with glibc
 2.35 or newer. On other systems, including Windows, build from source below.
 The npm package named `opentop` is a different project.
 
-To update or remove this installation:
+To update, rerun the installation command. To remove this installation:
 
 ```bash
-npm update -g opentop-rs
 npm uninstall -g opentop-rs
 # or, if installed with Bun
-bun update -g opentop-rs
 bun remove -g opentop-rs
 ```
 
@@ -314,10 +313,11 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --all
 ```
 
-To prepare an npm release, keep the versions in `Cargo.toml` and `package.json`
-in sync, then run the **Build npm package** GitHub Actions workflow. It builds
-and smoke-tests each native target and produces an `opentop-rs-npm` artifact
-containing the tarball for `npm publish`.
+To update the binaries used by Git-based npm and Bun installs, keep the versions
+in `Cargo.toml` and `package.json` in sync, then run the **Build npm package**
+GitHub Actions workflow. It builds and smoke-tests each native target and
+produces an `opentop-rs-npm` artifact. Extract its `npm/native` directory and
+commit the updated binaries to the repository.
 
 ## License
 

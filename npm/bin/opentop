@@ -27,7 +27,7 @@ done
 package_dir=$(CDPATH= cd -P -- "$(dirname -- "$source_path")/.." && pwd)
 binary=$package_dir/native/$platform/$command_name
 if [ ! -x "$binary" ]; then
-  echo "OpenTop: prebuilt binary missing for $platform; reinstall opentop-rs" >&2
+  echo "OpenTop: prebuilt binary missing for $platform; reinstall OpenTop from GitHub" >&2
   exit 1
 fi
 exec "$binary" "$@"

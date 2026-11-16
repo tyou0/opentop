@@ -40,6 +40,7 @@ jobs:
       - name: Build native binaries
         run: |
           cargo build --release --locked -p opentop-app -p opentop-cli
+          rm -rf npm/native
           mkdir -p npm/native/${{ matrix.platform }}
           cp target/release/opentop target/release/opentop-cli npm/native/${{ matrix.platform }}/
       - name: Test global installation
@@ -55,6 +56,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Remove checked-in binaries
+        run: rm -rf npm/native
       - uses: actions/download-artifact@v4
         with:
           path: npm/native
