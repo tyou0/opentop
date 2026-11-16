@@ -111,8 +111,8 @@ opentop
 
 The process table includes every accessible process. On a wide panel it also
 shows command lines; zoom the panel with `f` or `z` to give it more room.
-Selecting a process holds the row order while values continue to update. New
-processes appear at the end until live sorting resumes.
+The list stays sorted as values change and keeps a selected process on the
+same screen row. Press `r` to stop following it and return to the top.
 
 Use `--config <path>` to override the config file. Repeated
 `--plugin-dir <path>` flags add plugin roots. See [docs/PLUGINS.md](docs/PLUGINS.md)
@@ -125,7 +125,7 @@ for discovery, limits, and the opt-in example plugin.
 - `↑↓` / `j k` - Navigate processes when the Processes widget is focused
 - `PgUp/PgDn`, `Home/End` - Page or jump through the process list
 - `s` - Cycle process sort when Processes is focused
-- `r` - Resume live sorting and return to the top of the process list
+- `r` - Stop following the selected process and return to the top
 - `x` - Open process termination confirmation; `y` confirms, `n` / `Esc` cancels
 - `[` / `]` - Decrease/increase the number of widget columns
 - `Shift` + arrows - Move the focused widget; `Alt` + arrows resize it

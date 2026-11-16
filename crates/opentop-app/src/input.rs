@@ -100,7 +100,7 @@ impl App {
             }
             KeyCode::Char('s') if self.is_focused("builtin:processes") => self.cycle_sort(),
             KeyCode::Char('r') if self.is_focused("builtin:processes") => {
-                self.resume_process_sorting()
+                self.reset_process_selection()
             }
             KeyCode::Left => self.focus_prev(),
             KeyCode::Right => self.focus_next(),
@@ -178,10 +178,13 @@ impl App {
                     let first_data_row = panel.area.y.saturating_add(2);
                     if mouse.row >= first_data_row {
                         let data_row = (mouse.row - first_data_row) as usize;
-                        if data_row < self.process_page_size {
-                            self.select_process_index(
-                                self.process_state.offset.saturating_add(data_row),
-                            );
+                        if data_row < self.process_page_size
+                            && let Some(row) = data_row.checked_sub(self.process_state.top_padding)
+                        {
+                            let index = self.process_state.offset.saturating_add(row);
+                            if index < self.process_len() {
+                                self.select_process_index(index);
+                            }
                         }
                     }
                 }
@@ -269,7 +272,7 @@ mod tests {
             scroll_row: 0,
             columns: 1,
         };
-        let click = MouseEvent {
+        let mut click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
             row: 3,
@@ -278,11 +281,19 @@ mod tests {
         app.handle_mouse(click);
         assert_eq!(app.process_state.selected, 2);
 
-        assert!(app.process_order_held);
+        app.process_state.offset = 0;
+        app.process_state.top_padding = 2;
+        app.handle_mouse(click);
+        assert_eq!(app.process_state.selected, 2);
+        click.row = 4;
+        app.handle_mouse(click);
+        assert_eq!(app.process_state.selected, 0);
+
         app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
-        assert!(!app.process_order_held);
+        assert_eq!(app.process_selected_pid, None);
         assert_eq!(app.process_state.selected, 0);
         assert_eq!(app.process_state.offset, 0);
+        assert_eq!(app.process_state.top_padding, 0);
     }
 
     #[test]

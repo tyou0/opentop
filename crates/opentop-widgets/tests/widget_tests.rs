@@ -46,7 +46,7 @@ fn process_name_sort_is_case_insensitive_and_breaks_ties_by_pid() {
 }
 
 #[test]
-fn process_table_can_hold_order_while_values_change() {
+fn process_table_keeps_top_process_on_its_selected_screen_row() {
     let snapshot = Snapshot {
         processes: vec![
             ProcessInfo {
@@ -65,29 +65,44 @@ fn process_table_can_hold_order_while_values_change() {
         ..Default::default()
     };
     let theme = Theme::dark();
-    for (preserve_order, first_name) in [(true, "first"), (false, "busiest")] {
-        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
-        let mut state = ProcessTableState::default();
-        terminal
-            .draw(|frame| {
-                frame.render_stateful_widget(
-                    ProcessTable {
-                        snapshot: &snapshot,
-                        theme: &theme,
-                        config: ProcessTableConfig {
-                            preserve_order,
-                            ..Default::default()
-                        },
-                    },
-                    Rect::new(0, 0, 60, 8),
-                    &mut state,
-                );
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let first_row: String = (0..60).map(|x| buffer[(x, 2)].symbol()).collect();
-        assert!(first_row.contains(first_name), "{first_row}");
-    }
+    let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+    let mut state = ProcessTableState {
+        top_padding: 2,
+        ..Default::default()
+    };
+    terminal
+        .draw(|frame| {
+            frame.render_stateful_widget(
+                ProcessTable {
+                    snapshot: &snapshot,
+                    theme: &theme,
+                    config: ProcessTableConfig::default(),
+                },
+                Rect::new(0, 0, 60, 8),
+                &mut state,
+            );
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let selected_row: String = (0..60).map(|x| buffer[(x, 4)].symbol()).collect();
+    let next_row: String = (0..60).map(|x| buffer[(x, 5)].symbol()).collect();
+    assert!(selected_row.contains("busiest"), "{selected_row}");
+    assert!(next_row.contains("first"), "{next_row}");
+    assert_eq!(buffer[(1, 4)].bg, theme.selection_bg);
+}
+
+#[test]
+fn navigating_down_from_a_padded_top_row_scrolls_smoothly() {
+    let mut state = ProcessTableState {
+        top_padding: 3,
+        ..Default::default()
+    };
+    state.move_by(1, 6);
+    state.ensure_visible(6, 4);
+    assert_eq!((state.selected, state.offset, state.top_padding), (1, 0, 2));
+    state.move_by(4, 6);
+    state.ensure_visible(6, 4);
+    assert_eq!((state.selected, state.offset, state.top_padding), (5, 2, 0));
 }
 
 #[test]
@@ -120,6 +135,7 @@ fn process_sort_uses_pid_ties_and_selection_highlights_the_rendered_row() {
     let mut state = ProcessTableState {
         selected: 1,
         offset: 0,
+        ..Default::default()
     };
     terminal
         .draw(|frame| {

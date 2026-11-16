@@ -62,8 +62,6 @@ pub struct ProcessTableConfig {
     pub show_user: bool,
     pub show_command: bool,
     pub sort: ProcessSort,
-    /// Render processes in their supplied order while the user browses.
-    pub preserve_order: bool,
 }
 
 impl Default for ProcessTableConfig {
@@ -73,7 +71,6 @@ impl Default for ProcessTableConfig {
             show_user: true,
             show_command: false,
             sort: ProcessSort::Cpu,
-            preserve_order: false,
         }
     }
 }
@@ -83,13 +80,14 @@ impl Default for ProcessTableConfig {
 pub struct ProcessTableState {
     pub selected: usize,
     pub offset: usize,
+    /// Empty rows needed to keep the selection anchored near the top.
+    pub top_padding: usize,
 }
 
 impl ProcessTableState {
     pub fn move_by(&mut self, delta: isize, len: usize) {
         if len == 0 {
-            self.selected = 0;
-            self.offset = 0;
+            self.reset();
             return;
         }
         self.selected = self
@@ -105,13 +103,50 @@ impl ProcessTableState {
     pub fn select_clamped(&mut self, index: usize, len: usize) {
         self.selected = index.min(len.saturating_sub(1));
         if len == 0 {
-            self.selected = 0;
+            self.reset();
+        }
+    }
+
+    /// Keep the selected process on the same screen row as its rank changes.
+    pub fn follow_index(&mut self, index: usize) {
+        let row = self
+            .selected
+            .saturating_sub(self.offset)
+            .saturating_add(self.top_padding);
+        self.selected = index;
+        self.offset = index.saturating_sub(row);
+        self.top_padding = row.saturating_sub(index);
+    }
+
+    pub fn ensure_visible(&mut self, len: usize, visible: usize) {
+        if len == 0 {
+            self.reset();
+            return;
+        }
+        self.selected = self.selected.min(len - 1);
+        self.offset = self.offset.min(len - 1);
+        if visible == 0 {
+            self.top_padding = 0;
+            return;
+        }
+        self.top_padding = self.top_padding.min(visible - 1);
+        if self.selected < self.offset {
+            self.offset = self.selected;
+            self.top_padding = 0;
+        }
+        let row = (self.selected - self.offset).saturating_add(self.top_padding);
+        if row >= visible {
+            let shift = row - visible + 1;
+            let removed_padding = shift.min(self.top_padding);
+            self.top_padding -= removed_padding;
+            self.offset = self.offset.saturating_add(shift - removed_padding);
         }
     }
 
     pub fn reset(&mut self) {
         self.selected = 0;
         self.offset = 0;
+        self.top_padding = 0;
     }
 }
 
@@ -132,16 +167,7 @@ impl StatefulWidget for ProcessTable<'_> {
         let theme = self.theme;
         let block = panel(
             theme,
-            format!(
-                "{} · {}{}",
-                self.config.title,
-                self.config.sort.label(),
-                if self.config.preserve_order {
-                    " · held"
-                } else {
-                    ""
-                }
-            ),
+            format!("{} · {}", self.config.title, self.config.sort.label()),
         );
         let inner = block.inner(area);
         block.render(area, buf);
@@ -149,11 +175,7 @@ impl StatefulWidget for ProcessTable<'_> {
             return;
         }
 
-        let list: Vec<_> = if self.config.preserve_order {
-            self.snapshot.processes.iter().collect()
-        } else {
-            self.config.sort.sorted(&self.snapshot.processes)
-        };
+        let list = self.config.sort.sorted(&self.snapshot.processes);
         let total = list.len();
         if total == 0 {
             unavailable(theme, "no processes").render(inner, buf);
@@ -164,15 +186,11 @@ impl StatefulWidget for ProcessTable<'_> {
         if visible == 0 {
             return;
         }
-        state.selected = state.selected.min(total - 1);
-        if state.selected < state.offset {
-            state.offset = state.selected;
-        }
-        if state.selected >= state.offset + visible {
-            state.offset = state.selected + 1 - visible;
-        }
-        state.offset = state.offset.min(total.saturating_sub(1));
-        let end = (state.offset + visible).min(total);
+        state.ensure_visible(total, visible);
+        let end = state
+            .offset
+            .saturating_add(visible - state.top_padding)
+            .min(total);
 
         let header_cells: Vec<Cell> = {
             let mut cells = vec![Cell::from("pid")];
@@ -193,34 +211,34 @@ impl StatefulWidget for ProcessTable<'_> {
                 .add_modifier(Modifier::BOLD),
         );
 
-        let rows: Vec<Row> = list[state.offset..end]
-            .iter()
-            .map(|process| {
-                let mut cells = vec![Cell::from(format!("{:>6}", process.pid))];
-                if self.config.show_user {
-                    cells.push(Cell::from(Span::styled(
-                        pad_truncate(process.user.as_deref().unwrap_or("-"), 10),
-                        Style::default().fg(theme.muted),
-                    )));
-                }
-                cells.push(Cell::from(Span::styled(
-                    pad_truncate(&process.name, 20),
-                    Style::default().fg(theme.fg),
-                )));
-                cells.push(Cell::from(Span::styled(
-                    format!("{:>5.1}", process.cpu_percent),
-                    Style::default().fg(theme.usage_color(process.cpu_percent.min(100.0))),
-                )));
-                cells.push(Cell::from(units::bytes(process.memory_bytes)));
-                if self.config.show_command {
-                    cells.push(Cell::from(Span::styled(
-                        pad_truncate(&process.cmd, 64),
-                        Style::default().fg(theme.muted),
-                    )));
-                }
-                Row::new(cells)
-            })
+        let mut rows: Vec<Row> = (0..state.top_padding)
+            .map(|_| Row::new(Vec::<Cell>::new()))
             .collect();
+        rows.extend(list[state.offset..end].iter().map(|process| {
+            let mut cells = vec![Cell::from(format!("{:>6}", process.pid))];
+            if self.config.show_user {
+                cells.push(Cell::from(Span::styled(
+                    pad_truncate(process.user.as_deref().unwrap_or("-"), 10),
+                    Style::default().fg(theme.muted),
+                )));
+            }
+            cells.push(Cell::from(Span::styled(
+                pad_truncate(&process.name, 20),
+                Style::default().fg(theme.fg),
+            )));
+            cells.push(Cell::from(Span::styled(
+                format!("{:>5.1}", process.cpu_percent),
+                Style::default().fg(theme.usage_color(process.cpu_percent.min(100.0))),
+            )));
+            cells.push(Cell::from(units::bytes(process.memory_bytes)));
+            if self.config.show_command {
+                cells.push(Cell::from(Span::styled(
+                    pad_truncate(&process.cmd, 64),
+                    Style::default().fg(theme.muted),
+                )));
+            }
+            Row::new(cells)
+        }));
 
         let widths: Vec<Constraint> = {
             let mut widths = vec![Constraint::Length(7)];
@@ -250,7 +268,7 @@ impl StatefulWidget for ProcessTable<'_> {
         let mut table_state = TableState::default();
         // TableState fields are private in ratatui 0.30; drive it via
         // select_next, which selects the first row when nothing is selected.
-        for _ in 0..=(state.selected - state.offset) {
+        for _ in 0..=(state.selected - state.offset + state.top_padding) {
             table_state.select_next();
         }
         StatefulWidget::render(table, inner, buf, &mut table_state);

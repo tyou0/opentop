@@ -10,7 +10,7 @@ use opentop_core::plugins::{
 use opentop_core::snapshot::ProcessInfo;
 use opentop_theme::Theme;
 use opentop_widgets::processes::{ProcessSort, ProcessTableState};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -36,7 +36,7 @@ pub struct App {
     pub process_state: ProcessTableState,
     pub process_page_size: usize,
     pub process_selected_pid: Option<u32>,
-    pub process_order_held: bool,
+    process_selected_start_time_secs: Option<u64>,
     pub pending_process: Option<ProcessInfo>,
     pub process_action_status: Option<String>,
     process_action_rx: Option<Receiver<Result<u32, String>>>,
@@ -99,7 +99,7 @@ impl App {
             process_state: ProcessTableState::default(),
             process_page_size: 10,
             process_selected_pid: None,
-            process_order_held: false,
+            process_selected_start_time_secs: None,
             pending_process: None,
             process_action_status: None,
             process_action_rx: None,
@@ -240,19 +240,14 @@ impl App {
     }
 
     pub fn cycle_sort(&mut self) {
-        let pid = self.selected_process_pid();
         self.process_sort = self.process_sort.cycle();
-        self.process_selected_pid = pid;
-        if self.process_order_held {
-            self.sort_processes_in_place();
-        }
         self.sync_process_selection();
         self.dirty = true;
     }
 
-    pub fn resume_process_sorting(&mut self) {
-        self.process_order_held = false;
+    pub fn reset_process_selection(&mut self) {
         self.process_selected_pid = None;
+        self.process_selected_start_time_secs = None;
         self.process_state.reset();
         self.dirty = true;
     }
@@ -262,22 +257,25 @@ impl App {
     }
 
     pub fn selected_process_pid(&self) -> Option<u32> {
-        self.ordered_processes()
+        self.process_sort
+            .sorted(&self.frame.snapshot.processes)
             .get(self.process_state.selected)
             .map(|p| p.pid)
     }
 
     pub fn move_process_selection(&mut self, delta: isize) {
-        self.hold_process_order();
         self.process_state.move_by(delta, self.process_len());
-        self.process_selected_pid = self.selected_process_pid();
+        self.process_state
+            .ensure_visible(self.process_len(), self.process_page_size);
+        self.remember_process_selection();
         self.dirty = true;
     }
 
     pub fn select_process_index(&mut self, index: usize) {
-        self.hold_process_order();
         self.process_state.select_clamped(index, self.process_len());
-        self.process_selected_pid = self.selected_process_pid();
+        self.process_state
+            .ensure_visible(self.process_len(), self.process_page_size);
+        self.remember_process_selection();
         self.dirty = true;
     }
 
@@ -294,7 +292,8 @@ impl App {
             return;
         }
         self.pending_process = self
-            .ordered_processes()
+            .process_sort
+            .sorted(&self.frame.snapshot.processes)
             .get(self.process_state.selected)
             .map(|process| (*process).clone());
         if self.pending_process.is_some() {
@@ -344,100 +343,47 @@ impl App {
         true
     }
 
-    fn apply_frame(&mut self, mut frame: MonitorFrame) {
-        if self.process_order_held {
-            let positions: HashMap<_, _> = self
-                .frame
-                .snapshot
-                .processes
-                .iter()
-                .enumerate()
-                .map(|(index, process)| ((process.pid, process.start_time_secs), index))
-                .collect();
-            let mut existing: Vec<Option<ProcessInfo>> = (0..self.frame.snapshot.processes.len())
-                .map(|_| None)
-                .collect();
-            let mut new = Vec::new();
-            for process in frame.snapshot.processes.drain(..) {
-                if let Some(&index) = positions.get(&(process.pid, process.start_time_secs)) {
-                    existing[index] = Some(process);
-                } else {
-                    new.push(process);
-                }
-            }
-            frame
-                .snapshot
-                .processes
-                .extend(existing.into_iter().flatten());
-            frame.snapshot.processes.extend(new);
-        }
+    fn apply_frame(&mut self, frame: MonitorFrame) {
         self.frame = frame;
         self.sync_process_selection();
         self.dirty = true;
     }
 
-    fn ordered_processes(&self) -> Vec<&ProcessInfo> {
-        if self.process_order_held {
-            self.frame.snapshot.processes.iter().collect()
-        } else {
-            self.process_sort.sorted(&self.frame.snapshot.processes)
-        }
-    }
-
-    fn sort_processes_in_place(&mut self) {
-        let positions: HashMap<_, _> = self
+    fn remember_process_selection(&mut self) {
+        let identity = self
             .process_sort
             .sorted(&self.frame.snapshot.processes)
-            .into_iter()
-            .enumerate()
-            .map(|(index, process)| ((process.pid, process.start_time_secs), index))
-            .collect();
-        self.frame.snapshot.processes.sort_by_key(|process| {
-            positions
-                .get(&(process.pid, process.start_time_secs))
-                .copied()
-                .unwrap_or(usize::MAX)
-        });
-    }
-
-    fn hold_process_order(&mut self) {
-        if !self.process_order_held && !self.frame.snapshot.processes.is_empty() {
-            self.sort_processes_in_place();
-            self.process_order_held = true;
-        }
+            .get(self.process_state.selected)
+            .map(|process| (process.pid, process.start_time_secs));
+        self.process_selected_pid = identity.map(|(pid, _)| pid);
+        self.process_selected_start_time_secs = identity.map(|(_, start)| start);
     }
 
     fn sync_process_selection(&mut self) {
-        let processes = &self.frame.snapshot.processes;
-        if processes.is_empty() {
+        let sorted = self.process_sort.sorted(&self.frame.snapshot.processes);
+        if sorted.is_empty() {
             self.process_state.reset();
             self.process_selected_pid = None;
-            self.process_order_held = false;
+            self.process_selected_start_time_secs = None;
             return;
         }
-        if !self.process_order_held {
+        if let Some(pid) = self.process_selected_pid {
+            if let Some(index) = sorted.iter().position(|process| {
+                process.pid == pid
+                    && Some(process.start_time_secs) == self.process_selected_start_time_secs
+            }) {
+                self.process_state.follow_index(index);
+            } else {
+                self.process_selected_pid = None;
+                self.process_selected_start_time_secs = None;
+                self.process_state.top_padding = 0;
+            }
+        } else {
             self.process_state
-                .select_clamped(self.process_state.selected, processes.len());
-            self.process_selected_pid = None;
-            return;
+                .select_clamped(self.process_state.selected, sorted.len());
         }
-        let old_row = self
-            .process_state
-            .selected
-            .saturating_sub(self.process_state.offset);
-        let index = self
-            .process_selected_pid
-            .and_then(|pid| processes.iter().position(|p| p.pid == pid))
-            .unwrap_or_else(|| {
-                self.process_state
-                    .selected
-                    .min(processes.len().saturating_sub(1))
-            });
-        if index != self.process_state.selected {
-            self.process_state.offset = index.saturating_sub(old_row);
-        }
-        self.process_state.select(index);
-        self.process_selected_pid = Some(processes[index].pid);
+        self.process_state
+            .ensure_visible(sorted.len(), self.process_page_size);
     }
 
     pub(crate) fn set_exit(&mut self) {
@@ -866,6 +812,7 @@ mod tests {
 
         app.cycle_sort();
         assert_eq!(app.selected_process_pid(), Some(20));
+        assert_eq!(app.process_state.top_padding, 1);
 
         app.frame
             .snapshot
@@ -885,20 +832,19 @@ mod tests {
     }
 
     #[test]
-    fn browsing_holds_order_and_selection_while_values_change() {
+    fn selected_process_keeps_its_row_while_sorting_stays_live() {
         for sort in [ProcessSort::Cpu, ProcessSort::Memory] {
             let mut app = App::new();
             app.process_sort = sort;
+            app.process_page_size = 4;
             app.frame.snapshot.processes = (1..=6)
                 .map(|pid| process(pid, (70 - pid * 10) as f32, (70 - pid * 10) as u64))
                 .collect();
             app.sync_process_selection();
             app.select_process_index(3);
-            app.process_state.offset = 2;
             assert_eq!(app.selected_process_pid(), Some(4));
 
             let mut frame = app.frame.clone();
-            frame.snapshot.processes.retain(|process| process.pid > 2);
             frame.snapshot.processes.reverse();
             let selected = frame
                 .snapshot
@@ -906,30 +852,94 @@ mod tests {
                 .iter_mut()
                 .find(|p| p.pid == 4)
                 .unwrap();
-            selected.cpu_percent = 99.0;
-            selected.memory_bytes = 99;
-            frame.snapshot.processes.push(process(7, 100.0, 100));
+            selected.cpu_percent = 100.0;
+            selected.memory_bytes = 100;
+            frame.snapshot.processes.push(process(7, 90.0, 90));
             app.apply_frame(frame);
 
             assert_eq!(
-                app.frame
-                    .snapshot
-                    .processes
+                app.process_sort
+                    .sorted(&app.frame.snapshot.processes)
                     .iter()
                     .map(|p| p.pid)
                     .collect::<Vec<_>>(),
-                [3, 4, 5, 6, 7]
+                [4, 7, 1, 2, 3, 5, 6]
             );
             assert_eq!(app.selected_process_pid(), Some(4));
-            assert_eq!(app.process_state.selected - app.process_state.offset, 1);
-            let selected = &app.frame.snapshot.processes[app.process_state.selected];
-            assert_eq!(selected.cpu_percent, 99.0);
-            assert_eq!(selected.memory_bytes, 99);
+            assert_eq!(app.process_state.selected, 0);
+            assert_eq!(app.process_state.top_padding, 3);
 
-            app.resume_process_sorting();
-            assert!(!app.process_order_held);
+            let mut frame = app.frame.clone();
+            let selected = frame
+                .snapshot
+                .processes
+                .iter_mut()
+                .find(|p| p.pid == 4)
+                .unwrap();
+            selected.cpu_percent = 0.0;
+            selected.memory_bytes = 0;
+            app.apply_frame(frame);
+            assert_eq!(app.selected_process_pid(), Some(4));
+            assert_eq!(app.process_state.selected, 6);
+            assert_eq!(app.process_state.selected - app.process_state.offset, 3);
+            assert_eq!(app.process_state.top_padding, 0);
+
+            app.reset_process_selection();
             assert_eq!(app.selected_process_pid(), Some(7));
             assert_eq!(app.process_state.offset, 0);
+        }
+    }
+
+    #[test]
+    fn reused_pid_does_not_keep_following_a_different_process() {
+        let mut app = App::new();
+        let mut original = process(42, 90.0, 10);
+        original.start_time_secs = 10;
+        app.frame.snapshot.processes = vec![original];
+        app.select_process_index(0);
+
+        let mut frame = app.frame.clone();
+        frame.snapshot.processes[0].start_time_secs = 11;
+        app.apply_frame(frame);
+        assert_eq!(app.process_selected_pid, None);
+    }
+
+    #[test]
+    fn dashboard_keeps_selected_process_on_the_same_rendered_row() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut app = App::new();
+        let processes = WidgetId::builtin("processes");
+        app.set_enabled_widgets(vec![processes.clone()]);
+        app.set_focus(processes);
+        app.toggle_fullscreen();
+        app.frame.snapshot.processes = (1..=6)
+            .map(|pid| process(pid, (70 - pid * 10) as f32, (70 - pid * 10) as u64))
+            .collect();
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        let theme = app.theme().clone();
+        terminal
+            .draw(|frame| crate::dashboard::draw(frame, &mut app, &theme))
+            .unwrap();
+        app.select_process_index(3);
+
+        for usage in [30.0, 100.0, 0.0] {
+            let mut frame = app.frame.clone();
+            frame
+                .snapshot
+                .processes
+                .iter_mut()
+                .find(|p| p.pid == 4)
+                .unwrap()
+                .cpu_percent = usage;
+            app.apply_frame(frame);
+            terminal
+                .draw(|frame| crate::dashboard::draw(frame, &mut app, &theme))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row: String = (0..80).map(|x| buffer[(x, 6)].symbol()).collect();
+            assert!(row.contains("process-4"), "{row}");
+            assert_eq!(buffer[(1, 6)].bg, theme.selection_bg);
         }
     }
 
