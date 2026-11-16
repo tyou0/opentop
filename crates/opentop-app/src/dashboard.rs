@@ -30,6 +30,10 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     if area.is_empty() {
         return;
     }
+    frame.render_widget(
+        Block::default().style(Style::default().fg(theme.fg).bg(theme.bg)),
+        area,
+    );
     let header = Rect::new(area.x, area.y, area.width, area.height.min(1));
     let footer = Rect::new(
         area.x,
@@ -108,7 +112,8 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let history = &monitor_frame.history;
     for panel in &panel_layout.panels {
         let mut panel_theme = theme.clone();
-        if focused.as_ref() == Some(&panel.id) {
+        let panel_focused = focused.as_ref() == Some(&panel.id);
+        if panel_focused {
             panel_theme.border = theme.accent;
         }
         render_panel(
@@ -119,6 +124,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
             *process_sort,
             process_state,
             process_page_size,
+            panel_focused,
             catalog,
             plugin_results,
             &panel_theme,
@@ -188,6 +194,7 @@ fn render_panel(
     process_sort: ProcessSort,
     process_state: &mut ProcessTableState,
     process_page_size: &mut usize,
+    panel_focused: bool,
     catalog: &WidgetCatalog,
     plugin_results: &std::collections::HashMap<String, PluginResult>,
     theme: &Theme,
@@ -266,6 +273,7 @@ fn render_panel(
                     config: ProcessTableConfig {
                         sort: process_sort,
                         show_command: area.width >= 80,
+                        focused: panel_focused,
                         ..Default::default()
                     },
                 },
@@ -553,8 +561,74 @@ mod tests {
     use super::*;
     use crate::widgets::{WidgetDescriptor, WidgetId};
     use opentop_core::plugins::{PluginResult, PluginStatus};
+    use opentop_core::snapshot::{NetworkInterface, ProcessInfo};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn dashboard_theme_and_process_focus_match_across_panels() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let mut app = App::new();
+            let network = WidgetId::builtin("network_table");
+            let processes = WidgetId::builtin("processes");
+            app.set_enabled_widgets(vec![network.clone(), processes.clone()]);
+            app.config.layout.columns = Some(2);
+            app.frame.snapshot.network = vec![NetworkInterface {
+                name: "en0".into(),
+                state: "up".into(),
+                ..Default::default()
+            }];
+            app.frame.snapshot.processes = vec![ProcessInfo {
+                pid: 1,
+                name: "alpha".into(),
+                ..Default::default()
+            }];
+            app.set_focus(network.clone());
+            let mut terminal = Terminal::new(TestBackend::new(140, 18)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &mut app, &theme))
+                .unwrap();
+            let net_area = app
+                .panel_layout
+                .panels
+                .iter()
+                .find(|p| p.id == network)
+                .unwrap()
+                .area;
+            let proc_area = app
+                .panel_layout
+                .panels
+                .iter()
+                .find(|p| p.id == processes)
+                .unwrap()
+                .area;
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(net_area.x, net_area.y)].bg, theme.bg);
+            assert_eq!(buffer[(proc_area.x, proc_area.y)].bg, theme.bg);
+            assert_eq!(
+                buffer[(proc_area.x + 1, proc_area.y + 2)].bg,
+                theme.gauge_bg
+            );
+            assert_eq!(buffer[(net_area.x, net_area.y)].fg, theme.accent);
+            assert_eq!(buffer[(proc_area.x, proc_area.y)].fg, theme.border);
+
+            app.set_focus(processes);
+            terminal
+                .draw(|frame| draw(frame, &mut app, &theme))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(proc_area.x + 1, proc_area.y + 2)].bg,
+                theme.selection_bg
+            );
+            assert_eq!(
+                buffer[(proc_area.x + 1, proc_area.y + 2)].fg,
+                theme.selection_fg
+            );
+            assert_eq!(buffer[(proc_area.x, proc_area.y)].fg, theme.accent);
+            assert_eq!(buffer[(net_area.x, net_area.y)].fg, theme.border);
+        }
+    }
 
     #[test]
     fn catalog_dashboard_renders_at_target_and_tiny_sizes() {

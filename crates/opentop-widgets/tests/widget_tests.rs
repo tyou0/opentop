@@ -1,11 +1,82 @@
-use opentop_core::snapshot::{ProcessInfo, Snapshot};
+use opentop_core::snapshot::{NetworkInterface, ProcessInfo, Snapshot};
 use opentop_theme::Theme;
+use opentop_widgets::network::{NetTable, NetTableConfig};
 use opentop_widgets::processes::{
     ProcessSort, ProcessTable, ProcessTableConfig, ProcessTableState,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+
+#[test]
+fn interface_and_process_tables_share_theme_styles() {
+    let snapshot = Snapshot {
+        network: vec![NetworkInterface {
+            name: "en0".into(),
+            state: "up".into(),
+            ..Default::default()
+        }],
+        processes: vec![
+            ProcessInfo {
+                pid: 1,
+                name: "alpha".into(),
+                cpu_percent: 10.0,
+                ..Default::default()
+            },
+            ProcessInfo {
+                pid: 2,
+                name: "beta".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    for theme in [Theme::dark(), Theme::light()] {
+        let mut terminal = Terminal::new(TestBackend::new(160, 8)).unwrap();
+        let mut state = ProcessTableState {
+            selected: 1,
+            ..Default::default()
+        };
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    NetTable {
+                        snapshot: &snapshot,
+                        theme: &theme,
+                        config: NetTableConfig::default(),
+                    },
+                    Rect::new(0, 0, 80, 8),
+                );
+                frame.render_stateful_widget(
+                    ProcessTable {
+                        snapshot: &snapshot,
+                        theme: &theme,
+                        config: ProcessTableConfig {
+                            focused: false,
+                            ..Default::default()
+                        },
+                    },
+                    Rect::new(80, 0, 80, 8),
+                    &mut state,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let process_row: String = (80..160).map(|x| buffer[(x, 2)].symbol()).collect();
+        let name_x = 80 + process_row.find("alpha").unwrap() as u16;
+        assert_eq!(buffer[(1, 2)].fg, theme.fg);
+        assert_eq!(buffer[(name_x, 2)].fg, theme.fg);
+        assert_eq!(buffer[(0, 0)].bg, theme.bg);
+        assert_eq!(buffer[(80, 0)].bg, theme.bg);
+        for x in [1, 83] {
+            assert_eq!(buffer[(x, 1)].fg, theme.muted);
+            assert!(buffer[(x, 1)].modifier.contains(Modifier::BOLD));
+        }
+        assert_eq!(buffer[(81, 3)].bg, theme.gauge_bg);
+        assert_eq!(buffer[(81, 3)].fg, theme.fg);
+    }
+}
 
 #[test]
 fn test_process_sort_cycle() {

@@ -5,7 +5,7 @@ use opentop_theme::Theme;
 use ratatui::prelude::*;
 use ratatui::widgets::{Cell, Paragraph, Row, Sparkline, Table};
 
-use crate::common::{pad_truncate, panel, unavailable};
+use crate::common::{pad_truncate, panel, table_header_style, unavailable};
 
 fn is_loopback(name: &str) -> bool {
     name == "lo" || name.starts_with("lo0") || name.starts_with("lo1")
@@ -196,11 +196,7 @@ impl Widget for NetTable<'_> {
             Cell::from("total ↓"),
             Cell::from("total ↑"),
         ])
-        .style(
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::BOLD),
-        );
+        .style(table_header_style(theme));
 
         let rows: Vec<Row> = interfaces
             .iter()
@@ -214,7 +210,7 @@ impl Widget for NetTable<'_> {
                 Row::new(vec![
                     Cell::from(Span::styled(
                         pad_truncate(&iface.name, 10),
-                        Style::default().fg(theme.accent),
+                        Style::default().fg(theme.fg),
                     )),
                     Cell::from(Span::styled(
                         pad_truncate(&iface.state, 6),

@@ -4,7 +4,7 @@ use opentop_theme::Theme;
 use ratatui::prelude::*;
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
-use crate::common::{pad_truncate, panel, unavailable};
+use crate::common::{pad_truncate, panel, table_header_style, unavailable};
 
 /// Sort order for the process table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +62,8 @@ pub struct ProcessTableConfig {
     pub show_user: bool,
     pub show_command: bool,
     pub sort: ProcessSort,
+    /// Whether this panel currently receives process navigation input.
+    pub focused: bool,
 }
 
 impl Default for ProcessTableConfig {
@@ -71,6 +73,7 @@ impl Default for ProcessTableConfig {
             show_user: true,
             show_command: false,
             sort: ProcessSort::Cpu,
+            focused: true,
         }
     }
 }
@@ -205,11 +208,7 @@ impl StatefulWidget for ProcessTable<'_> {
             }
             cells
         };
-        let header = Row::new(header_cells).style(
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::BOLD),
-        );
+        let header = Row::new(header_cells).style(table_header_style(theme));
 
         let mut rows: Vec<Row> = (0..state.top_padding)
             .map(|_| Row::new(Vec::<Cell>::new()))
@@ -254,14 +253,17 @@ impl StatefulWidget for ProcessTable<'_> {
             widths
         };
 
+        let selection_style = if self.config.focused {
+            Style::default()
+                .bg(theme.selection_bg)
+                .fg(theme.selection_fg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(theme.gauge_bg).fg(theme.fg)
+        };
         let table = Table::new(rows, widths)
             .header(header)
-            .row_highlight_style(
-                Style::default()
-                    .bg(theme.selection_bg)
-                    .fg(theme.selection_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .row_highlight_style(selection_style)
             .highlight_symbol("▸ ")
             .style(Style::default().fg(theme.fg).bg(theme.bg));
 

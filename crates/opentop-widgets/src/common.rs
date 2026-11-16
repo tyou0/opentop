@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 /// A consistent panel: rounded border, themed colors, bold title.
 pub fn panel(theme: &Theme, title: impl Into<String>) -> Block<'static> {
     Block::bordered()
+        .style(Style::default().fg(theme.fg).bg(theme.bg))
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border))
         .title(Span::styled(
@@ -16,6 +17,12 @@ pub fn panel(theme: &Theme, title: impl Into<String>) -> Block<'static> {
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
         ))
+}
+
+pub(crate) fn table_header_style(theme: &Theme) -> Style {
+    Style::default()
+        .fg(theme.muted)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// A unicode progress bar as styled spans: filled part in `color`, rest in
