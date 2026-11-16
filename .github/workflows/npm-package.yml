@@ -45,6 +45,14 @@ jobs:
           cp target/release/opentop target/release/opentop-cli npm/native/${{ matrix.platform }}/
       - name: Test global installation
         run: sh scripts/test-npm-package.sh
+      - name: Test installation from GitHub
+        env:
+          PACKAGE_URL: git+https://github.com/${{ github.repository }}.git#${{ github.sha }}
+        run: |
+          npm install -g --prefix "$RUNNER_TEMP/npm-git" "$PACKAGE_URL"
+          "$RUNNER_TEMP/npm-git/bin/opentop-cli" --version
+          BUN_INSTALL="$RUNNER_TEMP/bun-git" bun install -g "$PACKAGE_URL"
+          "$RUNNER_TEMP/bun-git/bin/opentop-cli" --version
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}
