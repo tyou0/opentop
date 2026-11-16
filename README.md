@@ -21,6 +21,33 @@ A modern, cross-platform terminal system monitor built in Rust. opentop provides
 
 ## Installation
 
+### npm and Bun
+
+Install prebuilt binaries globally; no Rust toolchain or source checkout is needed:
+
+```bash
+npm install -g opentop-rs
+# or
+bun install -g opentop-rs
+```
+
+Run `opentop` for the dashboard or `opentop-cli` for snapshots. The package
+supports Apple Silicon and Intel macOS, and x64 and ARM64 Linux with glibc
+2.35 or newer. On other systems, including Windows, build from source below.
+The npm package named `opentop` is a different project.
+
+To update or remove this installation:
+
+```bash
+npm update -g opentop-rs
+npm uninstall -g opentop-rs
+# or, if installed with Bun
+bun update -g opentop-rs
+bun remove -g opentop-rs
+```
+
+### Install from source
+
 Install from a source checkout with a stable Rust toolchain and a C compiler/linker.
 On Windows, the Rust MSVC toolchain also requires the Visual Studio C++ build
 tools. See [rustup](https://rustup.rs/) for platform-specific setup.
@@ -71,12 +98,6 @@ mise exec rust@stable -- cargo install --locked --path crates/opentop-cli
 ```
 
 The binaries go into Cargo's installation directory as described above.
-
-### npm, pnpm, and Bun
-
-This repository does not provide a package for npm, pnpm, or Bun. The npm
-package named `opentop` is a different project. Use one of the Rust-based
-installation methods above for this application.
 
 ### Build without installing
 
@@ -236,7 +257,8 @@ python3 scripts/tui_perf.py \
 
 Platform support:
 - Built and tested on macOS arm64 (aarch64-apple-darwin)
-- Requires testing on Linux and Windows before release
+- The npm package build checks global installs on macOS and Linux for arm64 and x64
+- Windows requires further testing
 - Real SSH comparison pending fleet authorization
 
 ## CLI
@@ -291,6 +313,11 @@ cargo clippy --workspace -- -D warnings
 # Format code
 cargo fmt --all
 ```
+
+To prepare an npm release, keep the versions in `Cargo.toml` and `package.json`
+in sync, then run the **Build npm package** GitHub Actions workflow. It builds
+and smoke-tests each native target and produces an `opentop-rs-npm` artifact
+containing the tarball for `npm publish`.
 
 ## License
 

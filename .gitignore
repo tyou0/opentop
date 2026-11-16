@@ -1,4 +1,5 @@
 /target
+/npm/native/
 *.log
 .DS_Store
 .omo/

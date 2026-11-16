@@ -1,0 +1,15 @@
+{
+  "name": "opentop-rs",
+  "version": "0.1.0",
+  "description": "OpenTop terminal system monitor",
+  "license": "MIT",
+  "repository": "github:tyou0/opentop",
+  "bin": {
+    "opentop": "npm/bin/opentop",
+    "opentop-cli": "npm/bin/opentop"
+  },
+  "files": [
+    "npm/bin",
+    "npm/native"
+  ]
+}

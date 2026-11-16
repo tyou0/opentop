@@ -1,0 +1,74 @@
+name: Build npm package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: ubuntu-22.04
+            platform: linux-x64
+          - runner: ubuntu-22.04-arm
+            platform: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - name: Check package version
+        run: |
+          cargo metadata --no-deps --locked --format-version=1 | node -e '
+            let input = "";
+            process.stdin.on("data", chunk => input += chunk);
+            process.stdin.on("end", () => {
+              const version = require("./package.json").version;
+              if (JSON.parse(input).packages.some(pkg => pkg.version !== version)) {
+                console.error("Cargo and npm package versions must match");
+                process.exit(1);
+              }
+            });'
+      - name: Build native binaries
+        run: |
+          cargo build --release --locked -p opentop-app -p opentop-cli
+          mkdir -p npm/native/${{ matrix.platform }}
+          cp target/release/opentop target/release/opentop-cli npm/native/${{ matrix.platform }}/
+      - name: Test global installation
+        run: sh scripts/test-npm-package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: npm/native/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: npm/native
+      - name: Assemble package
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            test -f "npm/native/$platform/opentop"
+            test -f "npm/native/$platform/opentop-cli"
+          done
+          chmod +x npm/native/*/opentop npm/native/*/opentop-cli
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opentop-rs-npm
+          path: dist/*.tgz
+          if-no-files-found: error
