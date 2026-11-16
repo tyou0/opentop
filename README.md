@@ -37,7 +37,15 @@ supports Apple Silicon and Intel macOS, and x64 and ARM64 Linux with glibc
 2.35 or newer. On other systems, including Windows, build from source below.
 The npm package named `opentop` is a different project.
 
-To update, rerun the installation command. To remove this installation:
+To update an existing installation:
+
+```bash
+npm install -g git+https://github.com/tyou0/opentop.git
+# or, if installed with Bun
+bun update -g --latest opentop-rs
+```
+
+To remove this installation:
 
 ```bash
 npm uninstall -g opentop-rs
