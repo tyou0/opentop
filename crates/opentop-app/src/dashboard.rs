@@ -713,7 +713,8 @@ mod tests {
                 pid: 1,
                 name: "alpha".into(),
                 ..Default::default()
-            }];
+            }]
+            .into();
             app.set_focus(network.clone());
             let mut terminal = Terminal::new(TestBackend::new(140, 18)).unwrap();
             terminal

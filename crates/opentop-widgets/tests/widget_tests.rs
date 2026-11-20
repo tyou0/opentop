@@ -29,7 +29,8 @@ fn interface_and_process_tables_share_theme_styles() {
                 name: "beta".into(),
                 ..Default::default()
             },
-        ],
+        ]
+        .into(),
         ..Default::default()
     };
     for theme in [Theme::dark(), Theme::light()] {
@@ -132,7 +133,8 @@ fn process_table_keeps_top_process_on_its_selected_screen_row() {
                 cpu_percent: 99.0,
                 ..Default::default()
             },
-        ],
+        ]
+        .into(),
         ..Default::default()
     };
     let theme = Theme::dark();
@@ -197,7 +199,7 @@ fn process_sort_uses_pid_ties_and_selection_highlights_the_rendered_row() {
     );
 
     let snapshot = Snapshot {
-        processes,
+        processes: processes.into(),
         ..Snapshot::default()
     };
     let theme = Theme::dark();

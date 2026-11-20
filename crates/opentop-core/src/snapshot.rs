@@ -1,6 +1,8 @@
 //! The snapshot data model: everything opentop knows about the system at one
 //! point in time. All types are plain data and serializable.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 /// A section that may be entirely unavailable on some platforms or when an
@@ -74,7 +76,8 @@ pub struct Snapshot {
     pub disks: Vec<DiskUsageInfo>,
     pub disk_health: Availability<Vec<DiskHealth>>,
     pub battery: Availability<Vec<BatteryInfo>>,
-    pub processes: Vec<ProcessInfo>,
+    /// Shared across snapshots until the process collector publishes a new list.
+    pub processes: Arc<Vec<ProcessInfo>>,
     pub connections: Availability<ConnectionsSummary>,
 }
 
@@ -90,7 +93,7 @@ impl Default for Snapshot {
             disks: Vec::new(),
             disk_health: Availability::default(),
             battery: Availability::unavailable("not collected yet"),
-            processes: Vec::new(),
+            processes: Arc::default(),
             connections: Availability::unavailable(connections_default_reason()),
         }
     }
@@ -323,7 +326,28 @@ pub struct ConnectionsSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::GpuReading;
+    use super::{GpuReading, ProcessInfo, Snapshot};
+    use std::sync::Arc;
+
+    #[test]
+    fn snapshots_share_process_rows_and_keep_the_json_array() {
+        let snapshot = Snapshot {
+            processes: vec![ProcessInfo {
+                pid: 42,
+                ..ProcessInfo::default()
+            }]
+            .into(),
+            ..Snapshot::default()
+        };
+        assert!(Arc::ptr_eq(
+            &snapshot.processes,
+            &snapshot.clone().processes
+        ));
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["processes"][0]["pid"], 42);
+        let round_trip: Snapshot = serde_json::from_value(json).unwrap();
+        assert_eq!(round_trip.processes[0].pid, 42);
+    }
 
     #[test]
     fn older_gpu_snapshots_without_core_count_still_deserialize() {

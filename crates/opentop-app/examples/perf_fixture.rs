@@ -262,7 +262,7 @@ fn fixture_update() -> CollectorUpdate {
         CollectorUpdate::Disks(snapshot.disks),
         CollectorUpdate::DiskHealth(snapshot.disk_health),
         CollectorUpdate::Battery(snapshot.battery),
-        CollectorUpdate::Processes(snapshot.processes),
+        CollectorUpdate::Processes(std::sync::Arc::unwrap_or_clone(snapshot.processes)),
         CollectorUpdate::Connections(snapshot.connections),
     ])
 }
@@ -407,7 +407,8 @@ fn fill_snapshot(snapshot: &mut Snapshot) {
             user: Some("fixture".into()),
             num_threads: 1 + index as usize,
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .into();
 
     snapshot.connections = Availability::available(ConnectionsSummary {
         total: 24,

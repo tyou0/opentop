@@ -12,6 +12,7 @@ use opentop_theme::Theme;
 use opentop_widgets::processes::{ProcessSort, ProcessTableState};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::config::Config;
@@ -349,8 +350,12 @@ impl App {
     }
 
     fn apply_frame(&mut self, frame: MonitorFrame) {
+        let processes_changed =
+            !Arc::ptr_eq(&self.frame.snapshot.processes, &frame.snapshot.processes);
         self.frame = frame;
-        self.sync_process_selection();
+        if processes_changed {
+            self.sync_process_selection();
+        }
         self.dirty = true;
     }
 
@@ -365,14 +370,15 @@ impl App {
     }
 
     fn sync_process_selection(&mut self) {
-        let sorted = self.process_sort.sorted(&self.frame.snapshot.processes);
-        if sorted.is_empty() {
+        let processes = &self.frame.snapshot.processes;
+        if processes.is_empty() {
             self.process_state.reset();
             self.process_selected_pid = None;
             self.process_selected_start_time_secs = None;
             return;
         }
         if let Some(pid) = self.process_selected_pid {
+            let sorted = self.process_sort.sorted(processes);
             if let Some(index) = sorted.iter().position(|process| {
                 process.pid == pid
                     && Some(process.start_time_secs) == self.process_selected_start_time_secs
@@ -385,10 +391,10 @@ impl App {
             }
         } else {
             self.process_state
-                .select_clamped(self.process_state.selected, sorted.len());
+                .select_clamped(self.process_state.selected, processes.len());
         }
         self.process_state
-            .ensure_visible(sorted.len(), self.process_page_size);
+            .ensure_visible(processes.len(), self.process_page_size);
     }
 
     pub(crate) fn set_exit(&mut self) {
@@ -817,7 +823,8 @@ mod tests {
             process(10, 90.0, 10),
             process(20, 60.0, 30),
             process(30, 10.0, 20),
-        ];
+        ]
+        .into();
         app.sync_process_selection();
         app.select_process_index(1);
         assert_eq!(app.selected_process_pid(), Some(20));
@@ -826,17 +833,14 @@ mod tests {
         assert_eq!(app.selected_process_pid(), Some(20));
         assert_eq!(app.process_state.top_padding, 1);
 
-        app.frame
-            .snapshot
-            .processes
-            .retain(|process| process.pid != 20);
+        Arc::make_mut(&mut app.frame.snapshot.processes).retain(|process| process.pid != 20);
         app.sync_process_selection();
         assert_eq!(app.selected_process_pid(), Some(30));
         app.select_process_end();
         app.move_process_selection(1);
         assert_eq!(app.selected_process_pid(), Some(10));
 
-        app.frame.snapshot.processes.clear();
+        app.frame.snapshot.processes = Arc::default();
         app.sync_process_selection();
         assert_eq!(app.selected_process_pid(), None);
         assert_eq!(app.process_state.selected, 0);
@@ -851,22 +855,19 @@ mod tests {
             app.process_page_size = 4;
             app.frame.snapshot.processes = (1..=6)
                 .map(|pid| process(pid, (70 - pid * 10) as f32, (70 - pid * 10) as u64))
-                .collect();
+                .collect::<Vec<_>>()
+                .into();
             app.sync_process_selection();
             app.select_process_index(3);
             assert_eq!(app.selected_process_pid(), Some(4));
 
             let mut frame = app.frame.clone();
-            frame.snapshot.processes.reverse();
-            let selected = frame
-                .snapshot
-                .processes
-                .iter_mut()
-                .find(|p| p.pid == 4)
-                .unwrap();
+            let processes = Arc::make_mut(&mut frame.snapshot.processes);
+            processes.reverse();
+            let selected = processes.iter_mut().find(|p| p.pid == 4).unwrap();
             selected.cpu_percent = 100.0;
             selected.memory_bytes = 100;
-            frame.snapshot.processes.push(process(7, 90.0, 90));
+            processes.push(process(7, 90.0, 90));
             app.apply_frame(frame);
 
             assert_eq!(
@@ -882,9 +883,7 @@ mod tests {
             assert_eq!(app.process_state.top_padding, 3);
 
             let mut frame = app.frame.clone();
-            let selected = frame
-                .snapshot
-                .processes
+            let selected = Arc::make_mut(&mut frame.snapshot.processes)
                 .iter_mut()
                 .find(|p| p.pid == 4)
                 .unwrap();
@@ -907,11 +906,11 @@ mod tests {
         let mut app = App::new();
         let mut original = process(42, 90.0, 10);
         original.start_time_secs = 10;
-        app.frame.snapshot.processes = vec![original];
+        app.frame.snapshot.processes = vec![original].into();
         app.select_process_index(0);
 
         let mut frame = app.frame.clone();
-        frame.snapshot.processes[0].start_time_secs = 11;
+        Arc::make_mut(&mut frame.snapshot.processes)[0].start_time_secs = 11;
         app.apply_frame(frame);
         assert_eq!(app.process_selected_pid, None);
     }
@@ -927,7 +926,8 @@ mod tests {
         app.toggle_fullscreen();
         app.frame.snapshot.processes = (1..=6)
             .map(|pid| process(pid, (70 - pid * 10) as f32, (70 - pid * 10) as u64))
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
         let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
         let theme = app.theme().clone();
         terminal
@@ -937,9 +937,7 @@ mod tests {
 
         for usage in [30.0, 100.0, 0.0] {
             let mut frame = app.frame.clone();
-            frame
-                .snapshot
-                .processes
+            Arc::make_mut(&mut frame.snapshot.processes)
                 .iter_mut()
                 .find(|p| p.pid == 4)
                 .unwrap()
@@ -958,12 +956,12 @@ mod tests {
     #[test]
     fn live_sort_does_not_follow_the_initial_top_process() {
         let mut app = App::new();
-        app.frame.snapshot.processes = vec![process(1, 90.0, 10), process(2, 10.0, 20)];
+        app.frame.snapshot.processes = vec![process(1, 90.0, 10), process(2, 10.0, 20)].into();
         app.sync_process_selection();
         assert_eq!(app.selected_process_pid(), Some(1));
 
         let mut frame = app.frame.clone();
-        frame.snapshot.processes[1].cpu_percent = 100.0;
+        Arc::make_mut(&mut frame.snapshot.processes)[1].cpu_percent = 100.0;
         app.apply_frame(frame);
         assert_eq!(app.selected_process_pid(), Some(2));
         assert_eq!(app.process_state.selected, 0);

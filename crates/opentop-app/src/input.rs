@@ -306,7 +306,8 @@ mod tests {
                 cpu_percent: (21 - pid) as f32,
                 ..ProcessInfo::default()
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
         app.set_focus(WidgetId::builtin("processes"));
         app.process_page_size = 5;
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
@@ -356,14 +357,16 @@ mod tests {
             pid: 123,
             name: "first".into(),
             ..Default::default()
-        }];
+        }]
+        .into();
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
         assert_eq!(app.overlay, Overlay::ConfirmTerminate);
         app.frame.snapshot.processes = vec![ProcessInfo {
             pid: 456,
             name: "second".into(),
             ..Default::default()
-        }];
+        }]
+        .into();
         assert_eq!(app.pending_process.as_ref().unwrap().pid, 123);
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));

@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use sysinfo::DiskRefreshKind;
 use sysinfo::{DiskKind, Disks};
 
 use super::{Collector, CollectorUpdate, percent};
@@ -9,6 +11,8 @@ use crate::snapshot::DiskUsageInfo;
 pub struct DiskCollector {
     disks: Disks,
     updated_at: Instant,
+    #[cfg(target_os = "macos")]
+    volumes_refreshed_at: Instant,
 }
 
 impl DiskCollector {
@@ -16,6 +20,23 @@ impl DiskCollector {
         Self {
             disks: Disks::new_with_refreshed_list(),
             updated_at: Instant::now(),
+            #[cfg(target_os = "macos")]
+            volumes_refreshed_at: Instant::now(),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn refresh(&mut self) {
+        // macOS calculates reclaimable space for every volume during a full scan.
+        let now = Instant::now();
+        if now.duration_since(self.volumes_refreshed_at) >= Duration::from_secs(12) {
+            self.disks.refresh(true);
+            self.volumes_refreshed_at = now;
+        } else {
+            let io_only = DiskRefreshKind::nothing().with_io_usage();
+            for disk in self.disks.list_mut() {
+                disk.refresh_specifics(io_only);
+            }
         }
     }
 }
@@ -26,6 +47,9 @@ impl Collector for DiskCollector {
             // First tick: give deltas a meaningful window before dividing.
             std::thread::sleep(Duration::from_millis(400));
         }
+        #[cfg(target_os = "macos")]
+        self.refresh();
+        #[cfg(not(target_os = "macos"))]
         self.disks.refresh(true);
         let elapsed = self.updated_at.elapsed().as_secs_f64().max(0.1);
         self.updated_at = Instant::now();

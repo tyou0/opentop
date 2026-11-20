@@ -63,7 +63,7 @@ impl CollectorUpdate {
                 snapshot.network = interfaces;
             }
             Self::Disks(disks) => snapshot.disks = disks,
-            Self::Processes(processes) => snapshot.processes = processes,
+            Self::Processes(processes) => snapshot.processes = processes.into(),
             Self::Sensors(info) => {
                 let cpu_temp = info
                     .temps
