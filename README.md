@@ -150,6 +150,7 @@ for discovery, limits, and the opt-in example plugin.
 
 **Global controls (when not in a widget panel or overlay):**
 - `Tab` / `BackTab` - Focus the next/previous enabled widget
+- `p` - Jump to Processes
 - `↑↓` / `j k` - Navigate processes when the Processes widget is focused
 - `PgUp/PgDn`, `Home/End` - Page or jump through the process list
 - `s` - Cycle process sort when Processes is focused

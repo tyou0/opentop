@@ -60,7 +60,7 @@ pub struct RuntimeOptions {
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
-            data_interval: Duration::from_millis(100),
+            data_interval: Duration::from_millis(250),
             input_frame_interval: Duration::from_millis(33),
             max_poll: Duration::from_millis(50),
             perf: None,
@@ -77,7 +77,6 @@ pub fn run(
     let now = Instant::now();
     let mut last_data_fetch = now.checked_sub(options.data_interval).unwrap_or(now);
     let mut last_draw = now.checked_sub(options.input_frame_interval).unwrap_or(now);
-    let mut data_dirty = true;
     let mut initial_draw = true;
     let mut force_draw = false;
     let mut draw_seq = 0u64;
@@ -134,7 +133,7 @@ pub fn run(
         }
 
         let now = Instant::now();
-        if now >= last_data_fetch + options.data_interval {
+        let data_ready = if now >= last_data_fetch + options.data_interval {
             let started = Instant::now();
             let changed = app.update_frame(monitor);
             if let Some(perf) = &options.perf {
@@ -148,15 +147,14 @@ pub fn run(
                 );
             }
             last_data_fetch = now;
-            if changed {
-                data_dirty = true;
-            }
-        }
+            changed
+        } else {
+            false
+        };
 
         let now = Instant::now();
         let input_ready = app.needs_render()
             && (force_draw || now.duration_since(last_draw) >= options.input_frame_interval);
-        let data_ready = data_dirty && now.duration_since(last_draw) >= options.data_interval;
         if initial_draw || input_ready || data_ready {
             let theme = app.theme().clone();
             let started = Instant::now();
@@ -185,7 +183,6 @@ pub fn run(
 
             draw_seq += 1;
             last_draw = Instant::now();
-            data_dirty = false;
             initial_draw = false;
             force_draw = false;
             app.mark_rendered();

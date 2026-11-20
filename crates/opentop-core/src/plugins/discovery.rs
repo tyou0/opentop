@@ -210,18 +210,21 @@ fn data_home() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TempDir(PathBuf);
 
     impl TempDir {
         fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
             let suffix = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!("opentop-discovery-{suffix}"));
-            std::fs::create_dir_all(&path).unwrap();
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("opentop-discovery-{suffix}-{id}"));
+            std::fs::create_dir(&path).unwrap();
             Self(path)
         }
     }

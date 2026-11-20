@@ -21,11 +21,11 @@ impl MacmonBackend {
 
 impl SensorsBackend for MacmonBackend {
     fn sample(&mut self, interval: Duration) -> SensorsInfo {
-        let metrics = match self.sampler.get_metrics(interval.as_millis() as u32) {
+        // Keep the measurement window bounded when callers request a slower cadence.
+        let window = interval.min(Duration::from_secs(1));
+        let metrics = match self.sampler.get_metrics(window.as_millis() as u32) {
             Ok(metrics) => metrics,
             Err(err) => {
-                // Do not spin: get_metrics may return immediately on failure.
-                std::thread::sleep(interval);
                 return SensorsInfo {
                     source: format!("macmon ({err})"),
                     ..SensorsInfo::default()

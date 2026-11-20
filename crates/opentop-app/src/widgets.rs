@@ -57,17 +57,17 @@ impl WidgetCatalog {
     pub fn builtins() -> Self {
         let definitions = [
             ("cpu_graph", "CPU", "Total CPU usage over time", 8),
-            ("cpu_cores", "CPU Cores", "Per-core utilization", 6),
             ("memory", "Memory", "Used and available memory", 6),
+            ("processes", "Processes", "Sortable process table", 10),
+            ("disk_usage", "Disk Usage", "Mounted filesystem usage", 6),
+            ("network_graph", "Network", "Interface traffic history", 6),
+            ("cpu_cores", "CPU Cores", "Per-core utilization", 6),
             ("swap", "Swap", "Swap usage", 4),
             ("sensors", "Sensors", "Temperatures and fans", 6),
             ("power", "Power", "Power consumption", 6),
             ("cpu_tiers", "CPU Tiers", "Frequency clusters", 5),
             ("battery", "Battery", "Battery health and charge", 5),
-            ("network_graph", "Network", "Interface traffic history", 6),
-            ("disk_usage", "Disk Usage", "Mounted filesystem usage", 6),
             ("disk_health", "Disk Health", "SMART device health", 6),
-            ("processes", "Processes", "Sortable process table", 10),
             ("connections", "Connections", "Network socket summary", 6),
             ("network_table", "Network Table", "Per-interface traffic", 6),
         ];

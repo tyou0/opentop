@@ -1,5 +1,18 @@
 # Opentop performance baseline and follow-up
 
+## Dashboard responsiveness on tyoum4max, 2026-11-20
+
+On an M4 Max MacBook Pro with about 1,100 processes, the installed build and
+candidate each ran twice in a 160×48 PTY. CPU time and resident memory were
+sampled for 22 seconds after a four-second warm-up. Average main-process CPU
+fell from 4.48% to 3.29% of one core. Highest sampled RSS was 25.03 MiB before
+and 24.89 MiB after. Terminal output averaged 4.5 KB/s before and 5.3 KB/s after.
+
+The dashboard groups data updates into frames up to four times a second and
+handles input on its own schedule. Hardware sensors update every three seconds
+in the interactive app. CPU and memory still sample every second, and process
+CPU and memory still sample every two seconds.
+
 ## Process and disk refresh, 2026-11-20
 
 On macOS ARM64 with about 1,300 processes, two alternating 20-second runs per

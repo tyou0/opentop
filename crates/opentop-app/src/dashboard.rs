@@ -134,32 +134,25 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     }
 
     let mut binds = vec![
-        Keybind::new("q", "quit"),
+        Keybind::new("?", "help"),
         Keybind::new("Tab", "focus"),
-        Keybind::new("i", "info"),
-        Keybind::new("[]", "columns"),
+        Keybind::new("p", "processes"),
+        Keybind::new("i", "hardware"),
     ];
     if focused
         .as_ref()
         .is_some_and(|id| id.as_str() == "builtin:processes")
     {
-        binds.push(Keybind::new("x", "terminate"));
+        binds.push(Keybind::new("s", "sort"));
         if process_selected_pid.is_some() {
-            binds.push(Keybind::new("r", "stop following"));
+            binds.push(Keybind::new("r", "top"));
         }
     }
     binds.extend([
         Keybind::new("w", "widgets"),
-        Keybind::new("f", "fullscreen"),
-        Keybind::new("?", "help"),
+        Keybind::new("f", "zoom"),
+        Keybind::new("q", "quit"),
     ]);
-    frame.render_widget(
-        FooterKeybinds {
-            theme,
-            binds: &binds,
-        },
-        footer,
-    );
     let status = process_action_status.as_deref().or(config_error
         .as_deref()
         .or(plugin_error.as_deref())
@@ -167,6 +160,14 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     if let Some(error) = status {
         frame.render_widget(
             Paragraph::new(error).style(Style::default().fg(theme.accent).bg(theme.bg)),
+            footer,
+        );
+    } else {
+        frame.render_widget(
+            FooterKeybinds {
+                theme,
+                binds: &binds,
+            },
             footer,
         );
     }
@@ -386,7 +387,7 @@ fn render_missing(
 }
 
 fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let rect = centered(area, area.width.min(68), area.height.min(19));
+    let rect = centered(area, area.width.min(68), area.height.min(20));
     frame.render_widget(Clear, rect);
     let help = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -402,6 +403,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("r            Stop following and return to top"),
         Line::from("x            Terminate selected process (confirm first)"),
         Line::from("Tab          Focus next widget"),
+        Line::from("p            Focus Processes"),
         Line::from("[ / ]        Fewer / more columns"),
         Line::from("Shift+arrows Move focused widget"),
         Line::from("Alt+arrows   Resize focused widget"),

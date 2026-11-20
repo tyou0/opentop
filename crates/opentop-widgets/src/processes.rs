@@ -4,7 +4,7 @@ use opentop_theme::Theme;
 use ratatui::prelude::*;
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
-use crate::common::{pad_truncate, panel, table_header_style, unavailable};
+use crate::common::{panel, table_header_style, unavailable};
 
 /// Sort order for the process table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -178,8 +178,7 @@ impl StatefulWidget for ProcessTable<'_> {
             return;
         }
 
-        let list = self.config.sort.sorted(&self.snapshot.processes);
-        let total = list.len();
+        let total = self.snapshot.processes.len();
         if total == 0 {
             unavailable(theme, "no processes").render(inner, buf);
             return;
@@ -189,69 +188,75 @@ impl StatefulWidget for ProcessTable<'_> {
         if visible == 0 {
             return;
         }
+        let list = self.config.sort.sorted(&self.snapshot.processes);
         state.ensure_visible(total, visible);
         let end = state
             .offset
             .saturating_add(visible - state.top_padding)
             .min(total);
 
-        let header_cells: Vec<Cell> = {
-            let mut cells = vec![Cell::from("pid")];
-            if self.config.show_user {
-                cells.push(Cell::from("user"));
-            }
-            cells.push(Cell::from("name"));
-            cells.push(Cell::from("%cpu"));
-            cells.push(Cell::from("memory"));
-            if self.config.show_command {
-                cells.push(Cell::from("command"));
-            }
-            cells
+        // Reserve space for the selection marker and keep CPU and memory ahead of optional fields.
+        let show_cpu = inner.width >= 16;
+        let show_memory = inner.width >= 25;
+        let show_pid = inner.width >= 33;
+        let show_user = self.config.show_user && inner.width >= 52;
+        let show_command = self.config.show_command && inner.width >= 78;
+        let name_width = if show_command {
+            Constraint::Length(20)
+        } else {
+            Constraint::Min(0)
         };
-        let header = Row::new(header_cells).style(table_header_style(theme));
+        let columns = [
+            (show_pid, "PID", Constraint::Length(6)),
+            (show_user, "User", Constraint::Length(10)),
+            (true, "Process", name_width),
+            (show_cpu, "CPU%", Constraint::Length(6)),
+            (show_memory, "Memory", Constraint::Length(8)),
+            (show_command, "Command", Constraint::Min(16)),
+        ];
+        let header = Row::new(
+            columns
+                .iter()
+                .filter_map(|&(visible, title, _)| visible.then_some(title)),
+        )
+        .style(table_header_style(theme));
+        let widths = columns
+            .iter()
+            .filter_map(|&(visible, _, width)| visible.then_some(width))
+            .collect::<Vec<_>>();
 
         let mut rows: Vec<Row> = (0..state.top_padding)
             .map(|_| Row::new(Vec::<Cell>::new()))
             .collect();
         rows.extend(list[state.offset..end].iter().map(|process| {
-            let mut cells = vec![Cell::from(format!("{:>6}", process.pid))];
-            if self.config.show_user {
+            let mut cells = Vec::with_capacity(widths.len());
+            if show_pid {
+                cells.push(Cell::from(format!("{:>6}", process.pid)));
+            }
+            if show_user {
                 cells.push(Cell::from(Span::styled(
-                    pad_truncate(process.user.as_deref().unwrap_or("-"), 10),
+                    process.user.as_deref().unwrap_or("-"),
                     Style::default().fg(theme.muted),
                 )));
             }
-            cells.push(Cell::from(Span::styled(
-                pad_truncate(&process.name, 20),
-                Style::default().fg(theme.fg),
-            )));
-            cells.push(Cell::from(Span::styled(
-                format!("{:>5.1}", process.cpu_percent),
-                Style::default().fg(theme.usage_color(process.cpu_percent.min(100.0))),
-            )));
-            cells.push(Cell::from(units::bytes(process.memory_bytes)));
-            if self.config.show_command {
+            cells.push(Cell::from(process.name.as_str()));
+            if show_cpu {
                 cells.push(Cell::from(Span::styled(
-                    pad_truncate(&process.cmd, 64),
+                    format!("{:>5.1}", process.cpu_percent),
+                    Style::default().fg(theme.usage_color(process.cpu_percent.min(100.0))),
+                )));
+            }
+            if show_memory {
+                cells.push(Cell::from(units::bytes(process.memory_bytes)));
+            }
+            if show_command {
+                cells.push(Cell::from(Span::styled(
+                    process.cmd.as_str(),
                     Style::default().fg(theme.muted),
                 )));
             }
             Row::new(cells)
         }));
-
-        let widths: Vec<Constraint> = {
-            let mut widths = vec![Constraint::Length(7)];
-            if self.config.show_user {
-                widths.push(Constraint::Length(11));
-            }
-            widths.push(Constraint::Length(21));
-            widths.push(Constraint::Length(6));
-            widths.push(Constraint::Length(9));
-            if self.config.show_command {
-                widths.push(Constraint::Min(16));
-            }
-            widths
-        };
 
         let selection_style = if self.config.focused {
             Style::default()
@@ -268,11 +273,7 @@ impl StatefulWidget for ProcessTable<'_> {
             .style(Style::default().fg(theme.fg).bg(theme.bg));
 
         let mut table_state = TableState::default();
-        // TableState fields are private in ratatui 0.30; drive it via
-        // select_next, which selects the first row when nothing is selected.
-        for _ in 0..=(state.selected - state.offset + state.top_padding) {
-            table_state.select_next();
-        }
+        table_state.select(Some(state.selected - state.offset + state.top_padding));
         StatefulWidget::render(table, inner, buf, &mut table_state);
     }
 }

@@ -356,7 +356,6 @@ impl App {
         if processes_changed {
             self.sync_process_selection();
         }
-        self.dirty = true;
     }
 
     fn remember_process_selection(&mut self) {

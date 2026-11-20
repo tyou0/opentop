@@ -80,6 +80,47 @@ fn interface_and_process_tables_share_theme_styles() {
 }
 
 #[test]
+fn process_table_keeps_metrics_visible_in_a_narrow_panel() {
+    let snapshot = Snapshot {
+        processes: vec![ProcessInfo {
+            pid: 42,
+            name: "worker".into(),
+            user: Some("operator".into()),
+            cmd: "worker --run".into(),
+            cpu_percent: 42.5,
+            memory_bytes: 64 * 1024 * 1024,
+            ..Default::default()
+        }]
+        .into(),
+        ..Default::default()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(34, 5)).unwrap();
+    terminal
+        .draw(|frame| {
+            frame.render_stateful_widget(
+                ProcessTable {
+                    snapshot: &snapshot,
+                    theme: &Theme::dark(),
+                    config: ProcessTableConfig {
+                        show_command: true,
+                        ..Default::default()
+                    },
+                },
+                frame.area(),
+                &mut ProcessTableState::default(),
+            );
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row: String = (0..34).map(|x| buffer[(x, 2)].symbol()).collect();
+    assert!(
+        row.contains("worker") && row.contains("42.5") && row.contains("64.0 MB"),
+        "{row}"
+    );
+    assert!(!row.contains("operator"), "{row}");
+}
+
+#[test]
 fn test_process_sort_cycle() {
     let sort = ProcessSort::Cpu;
     let next = sort.cycle();

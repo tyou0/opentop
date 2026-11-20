@@ -7,11 +7,13 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use opentop_app::config::resolve_config_path;
 use opentop_app::runtime::{self, RuntimeOptions};
 use opentop_app::state::App;
 use opentop_app::terminal::{TerminalSession, install_panic_hook};
+use opentop_core::monitor::Intervals;
 use opentop_core::{MonitorConfig, MonitorHandle};
 
 fn main() -> io::Result<()> {
@@ -24,6 +26,10 @@ fn main() -> io::Result<()> {
     app.rescan_plugins();
     let monitor = MonitorHandle::start(MonitorConfig {
         top_processes: usize::MAX,
+        intervals: Intervals {
+            sensors: Duration::from_secs(3),
+            ..Intervals::default()
+        },
         ..MonitorConfig::default()
     });
 

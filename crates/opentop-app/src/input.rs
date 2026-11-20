@@ -111,6 +111,9 @@ impl App {
         match key.code {
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char('i') => self.open_hardware(),
+            KeyCode::Char('p') if key.modifiers.is_empty() => {
+                self.set_focus(WidgetId::builtin("processes"));
+            }
             KeyCode::Char('w') => self.open_widgets(),
             KeyCode::Char('t') => self.toggle_theme(),
             KeyCode::Char('f' | 'z') => self.toggle_fullscreen(),
@@ -170,7 +173,12 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.overlay != Overlay::None {
+        if self.overlay != Overlay::None
+            || !matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Down(_)
+            )
+        {
             return;
         }
         let hit = self.panel_layout.hit_test(mouse.column, mouse.row).cloned();
@@ -240,6 +248,18 @@ mod tests {
         assert!(!app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert_eq!(app.overlay, Overlay::None);
         assert!(!app.should_exit());
+    }
+
+    #[test]
+    fn process_shortcut_focuses_the_table_without_selecting_a_process() {
+        let mut app = App::new();
+        assert!(!app.is_focused("builtin:processes"));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert!(app.is_focused("builtin:processes"));
+        assert_eq!(app.process_selected_pid, None);
+        app.open_help();
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(app.overlay, Overlay::Help);
     }
 
     #[test]

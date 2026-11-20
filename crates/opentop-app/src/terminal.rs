@@ -29,6 +29,15 @@ impl TerminalSession {
             restore_terminal();
             return Err(err);
         }
+        // Only clicks and scrolling are used. Disable motion and drag reports on ANSI terminals.
+        #[cfg(unix)]
+        if let Err(err) = stdout
+            .write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1000h")
+            .and_then(|()| stdout.flush())
+        {
+            restore_terminal();
+            return Err(err);
+        }
 
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = match Terminal::new(backend) {
