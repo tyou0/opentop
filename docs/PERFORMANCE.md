@@ -1,5 +1,24 @@
 # Opentop performance baseline and follow-up
 
+## Process and disk refresh, 2026-11-20
+
+On macOS ARM64 with about 1,300 processes, two alternating 20-second runs per
+OpenTop build used the default dashboard at 160×48. The harness drained terminal
+output and sampled main-process CPU time and resident memory with `ps` after a
+three-second warm-up. htop 3.5.3 ran once for comparison.
+
+| Program | Mean CPU (% of one core) | Highest sampled RSS |
+| --- | ---: | ---: |
+| OpenTop before these changes | 2.45% | 24.27 MiB |
+| OpenTop with these changes | 1.75% | 22.81 MiB |
+| htop 3.5.3 | 0.30% | 11.81 MiB |
+
+OpenTop shares process rows between refreshes and reconciles the selected row
+when the process sample changes. On macOS, it refreshes disk activity every
+three seconds and checks available capacity and mounted volumes about every
+12 seconds. The measurements exclude helper processes and describe this workload
+on one Mac.
+
 ## Local resource spot check, 2026-11-11
 
 On macOS arm64, a 160x48 PTY ran the release build with the default dashboard
